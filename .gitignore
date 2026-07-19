@@ -1,0 +1,16 @@
+# ── PROTEÇÃO DE DADOS ─────────────────────────────────────────────
+# NUNCA versionar planilhas com dados de cliente (nomes, CNPJ, senhas).
+# Regra: ignora TODO .xlsx e libera SÓ o modelo limpo, gerado e conferido
+# por gerar_modelo.py.
+*.xlsx
+!CONTROLE_EMPRESAS_MODELO.xlsx
+
+# PDFs (o manual pode ser regerado do .md; evita subir algo com dado sem querer)
+*.pdf
+
+# ── Temporários ───────────────────────────────────────────────────
+__pycache__/
+*.pyc
+~$*
+.DS_Store
+Thumbs.db
