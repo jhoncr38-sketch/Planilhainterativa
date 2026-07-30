@@ -47,6 +47,7 @@ function onOpen() {
     .createMenu('🧮 Modo Contador')
     .addItem('Abrir novo mês', 'dialogoAbrirMes')
     .addItem('Cadastrar empresa nova', 'dialogoCadastro')
+    .addItem('Importar empresas (em massa)', 'dialogoImportar')
     .addSeparator()
     .addItem('Renomear empresa', 'dialogoRenomear')
     .addItem('Ativar / desativar empresa', 'dialogoAtivar')
@@ -55,6 +56,7 @@ function onOpen() {
     .addSeparator()
     .addItem('Conferir faturamentos suspeitos', 'dialogoAnomalias')
     .addItem('Mostrar / atualizar calendário', 'mostrarCalendario')
+    .addItem('Desativar calendário', 'desativarCalendario')
     .addItem('Bloco de notas', 'abrirBlocoDeNotas')
     .addItem('Virar o ano', 'virarOAno')
     .addSeparator()
@@ -1690,6 +1692,7 @@ function mostrarCalendario() {
   const painel = planilha().getSheetByName('PAINEL');
   if (!painel) { SpreadsheetApp.getUi().alert('Não achei a aba PAINEL.'); return; }
 
+  PropertiesService.getDocumentProperties().setProperty('CALENDARIO', 'on');   // (re)liga
   garantirAbaVencimentos();
   garantirCategorias();
   aplicarDropdownCategoria();
@@ -1785,10 +1788,27 @@ function montarCalendario() {
   legenda.setFontSize(10).setHorizontalAlignment('center').setVerticalAlignment('middle');
 }
 
+/** Diz se o calendário está ligado (padrão: ligado; só 'off' desliga). */
+function calendarioAtivo() {
+  return PropertiesService.getDocumentProperties().getProperty('CALENDARIO') !== 'off';
+}
+
+/** Desliga o calendário: limpa a área no PAINEL e para de repintar.
+ *  Pra religar, use "Mostrar / atualizar calendário". */
+function desativarCalendario() {
+  PropertiesService.getDocumentProperties().setProperty('CALENDARIO', 'off');
+  const painel = planilha().getSheetByName('PAINEL');
+  if (painel) painel.getRange(1, CAL_COL, 20, 7).breakApart().clearContent().clearFormat();
+  SpreadsheetApp.getUi().alert('Calendário desativado.\n\n' +
+    'A área dele no PAINEL foi limpa e ele não será mais desenhado.\n' +
+    'Pra ligar de novo: menu → Mostrar / atualizar calendário.');
+}
+
 /** Repinta o calendário do mês selecionado. Só valores/cores — sem fórmula. */
 function atualizarCalendario() {
   const painel = planilha().getSheetByName('PAINEL');
   if (!painel) return;
+  if (!calendarioAtivo()) return;               // respeita o "Desativar calendário"
 
   const mesTexto = String(mesDoPainel()).trim().toUpperCase();
   const mesNum = MESES.indexOf(mesTexto) + 1;
@@ -2193,4 +2213,187 @@ function apagar(id){ if(confirm('Apagar esta anotação?')) google.script.run.wi
 carregar();
 </script>
 </body></html>`;
+}
+
+// ============================================================
+//  13. IMPORTAR EMPRESAS EM MASSA  (aba IMPORTAR + barra lateral)
+// ============================================================
+//  Você cola a lista na aba IMPORTAR (EMPRESA | CNPJ | REGIME | PERFIL |
+//  IE | IM) e clica em Importar. O script cadastra todas de uma vez no
+//  CADASTRO e no COMPARATIVO, pulando as que já existem.
+//  Padrões: Ativa=Sim; Folha/SPED=Sim (MEI=Não); senha em branco.
+// ============================================================
+
+const IMPORTAR_ABA = 'IMPORTAR';
+const IMPORTAR_CAB = ['EMPRESA', 'CNPJ', 'REGIME', 'PERFIL',
+                      'INSCRIÇÃO ESTADUAL', 'INSCRIÇÃO MUNICIPAL'];
+
+/** "simples nacional" -> "Simples Nacional", etc. Desconhecido passa como veio. */
+function normalizarRegime(r) {
+  const s = String(r).trim().toLowerCase();
+  if (!s) return '';
+  if (s.indexOf('hibrid') >= 0 || s.indexOf('híbrid') >= 0) return 'Simples Híbrido';
+  if (s.indexOf('simples') >= 0) return 'Simples Nacional';
+  if (s.indexOf('presumido') >= 0) return 'Lucro Presumido';
+  if (s === 'mei') return 'MEI';
+  return String(r).trim();
+}
+
+/** Cria a aba IMPORTAR (se não existir) com cabeçalho e colunas de texto. */
+function garantirAbaImportar() {
+  const ss = planilha();
+  let aba = ss.getSheetByName(IMPORTAR_ABA);
+  if (aba) return aba;
+  aba = ss.insertSheet(IMPORTAR_ABA);
+  aba.getRange('A1:F1000').setNumberFormat('@');   // tudo texto: preserva CNPJ/IE
+  aba.getRange(1, 1, 1, IMPORTAR_CAB.length).setValues([IMPORTAR_CAB])
+     .setFontWeight('bold').setBackground(COR_NAVY).setFontColor('#ffffff');
+  aba.setColumnWidth(1, 240); aba.setColumnWidth(2, 150);
+  aba.setColumnWidth(5, 150); aba.setColumnWidth(6, 150);
+  aba.setFrozenRows(1);
+  return aba;
+}
+
+/** Lê a aba IMPORTAR -> [{nome,cnpj,regime,perfil,ie,im}]. */
+function lerImportar() {
+  const aba = garantirAbaImportar();
+  const fim = aba.getLastRow();
+  if (fim < 2) return [];
+  const linhas = [];
+  aba.getRange(2, 1, fim - 1, 6).getValues().forEach(l => {
+    const nome = String(l[0]).trim();
+    if (!nome) return;
+    linhas.push({
+      nome: nome, cnpj: String(l[1]).trim(), regime: normalizarRegime(l[2]),
+      perfil: String(l[3]).trim(), ie: String(l[4]).trim(), im: String(l[5]).trim(),
+    });
+  });
+  return linhas;
+}
+
+/** Confere a aba IMPORTAR antes de cadastrar. Devolve contagens + prévia. */
+function analisarImportacao() {
+  const faltando = abasFaltando(['CADASTRO', 'COMPARATIVO']);
+  if (faltando.length > 0) return { ok: false, msg: msgAbasFaltando(faltando) };
+
+  const linhas = lerImportar();
+  if (linhas.length === 0) {
+    return { ok: true, vazio: true,
+      msg: 'A aba IMPORTAR está vazia.\n\nCole sua lista lá (a partir da linha 2) e clique em Conferir de novo.' };
+  }
+
+  const existentes = {};
+  lerCadastro().forEach(e => { existentes[String(e.empresa).trim().toUpperCase()] = true; });
+
+  let novas = 0, duplicadas = 0;
+  const vistos = {}, previa = [];
+  linhas.forEach(l => {
+    const chave = l.nome.toUpperCase();
+    if (existentes[chave] || vistos[chave]) { duplicadas++; return; }
+    vistos[chave] = true; novas++;
+    if (previa.length < 5) previa.push(l.nome + ' — ' + (l.regime || '(sem regime)'));
+  });
+
+  return { ok: true, vazio: false, total: linhas.length, novas: novas, duplicadas: duplicadas, previa: previa };
+}
+
+/** Cadastro em massa: cada nova empresa entra no CADASTRO e no COMPARATIVO.
+ *  Pula duplicadas. Devolve {ok, msg}. */
+function executarImportacao() {
+  const faltando = abasFaltando(['CADASTRO', 'COMPARATIVO']);
+  if (faltando.length > 0) return { ok: false, msg: msgAbasFaltando(faltando) };
+
+  const linhas = lerImportar();
+  if (linhas.length === 0) return { ok: false, msg: 'A aba IMPORTAR está vazia.' };
+
+  const cad = planilha().getSheetByName('CADASTRO');
+  const existentes = {};
+  lerCadastro().forEach(e => { existentes[String(e.empresa).trim().toUpperCase()] = true; });
+
+  let cadastradas = 0, duplicadas = 0, semComparativo = 0;
+  const vistos = {};
+
+  linhas.forEach(l => {
+    const chave = l.nome.toUpperCase();
+    if (existentes[chave] || vistos[chave]) { duplicadas++; return; }
+    vistos[chave] = true;
+
+    const ehMei = (l.regime === 'MEI') || (l.perfil.toUpperCase() === 'MEI');
+    const folha = ehMei ? 'Não' : 'Sim';
+    const sped  = ehMei ? 'Não' : 'Sim';
+
+    const linhaCad = ultimaLinhaCol(cad, 'A') + 1;
+    cad.getRange(linhaCad, 1, 1, 10).setValues([[
+      l.nome, l.cnpj, l.regime, folha, sped, 'Sim', l.perfil, l.ie, l.im, '']]);
+    cad.getRange(linhaCad, 1, 1, 10)
+       .setFontFamily('Arial').setFontSize(10).setVerticalAlignment('middle')
+       .setHorizontalAlignment('center')
+       .setBorder(true, true, true, true, true, true, '#b7b7b7', SpreadsheetApp.BorderStyle.SOLID);
+    cad.getRange(linhaCad, 1).setFontWeight('bold').setHorizontalAlignment('left');
+    cad.getRange(linhaCad, 2).setNumberFormat('@');   // CNPJ como texto
+    cad.getRange(linhaCad, 8).setNumberFormat('@');   // IE como texto
+    cad.getRange(linhaCad, 10).setNumberFormat('@');  // SENHA como texto
+
+    if (!adicionarNoComparativo(l.nome)) semComparativo++;
+    cadastradas++;
+  });
+
+  // limpa os dados da aba IMPORTAR (mantém o cabeçalho)
+  const imp = garantirAbaImportar();
+  const fim = imp.getLastRow();
+  if (fim >= 2) imp.getRange(2, 1, fim - 1, 6).clearContent();
+
+  let msg = '✔ Importação concluída!\n\n' +
+    '• Cadastradas: ' + cadastradas + '\n' +
+    '• Já existiam (puladas): ' + duplicadas;
+  if (semComparativo > 0)
+    msg += '\n• ⚠ ' + semComparativo + ' não entraram no COMPARATIVO (confira as linhas EMPRESA/TOTAL GERAL).';
+  msg += '\n\nPara colocá-las num mês, use "Abrir novo mês" — ele puxa todas as ativas.';
+  return { ok: true, msg: msg };
+}
+
+/** Abre a barra lateral de importação e leva você pra aba IMPORTAR. */
+function dialogoImportar() {
+  planilha().setActiveSheet(garantirAbaImportar());
+  const html = HtmlService.createHtmlOutput(htmlImportar()).setTitle('Importar empresas');
+  SpreadsheetApp.getUi().showSidebar(html);
+}
+
+function htmlImportar() {
+  return '<!DOCTYPE html><html><head><base target="_top">' + estiloDialogo() + '</head><body>' +
+  '<div class="sub">Cole sua lista na aba <b>IMPORTAR</b> (já aberta ao lado), a partir da linha 2 — colunas: EMPRESA · CNPJ · REGIME · PERFIL · IE · IM. Depois clique em Conferir.</div>' +
+  '<div class="aviso">Padrões: Ativa = Sim · Folha/SPED = Sim (MEI = Não) · senha em branco · regime normalizado. Empresas que já existem são puladas.</div>' +
+  '<div class="botoes">' +
+  '  <button class="pri" id="btnVer" onclick="conferir()">Conferir</button>' +
+  '</div>' +
+  '<div id="info"></div>' +
+  '<div id="bloco" style="display:none">' +
+  '  <div class="botoes"><button class="pri" id="btnImp" onclick="importar()">Importar</button></div>' +
+  '</div>' +
+  '<div id="status"></div>' +
+  '<script>' +
+  'function msg(t,c){var s=document.getElementById("status");s.className=c;s.textContent=t;}' +
+  'function conferir(){' +
+  '  document.getElementById("btnVer").disabled=true;' +
+  '  document.getElementById("bloco").style.display="none";' +
+  '  document.getElementById("status").className="";document.getElementById("status").textContent="";' +
+  '  google.script.run.withSuccessHandler(function(r){' +
+  '    document.getElementById("btnVer").disabled=false;' +
+  '    if(!r.ok){ document.getElementById("info").innerHTML=\'<div class="alerta">\'+r.msg+"</div>"; return; }' +
+  '    if(r.vazio){ document.getElementById("info").innerHTML=\'<div class="caixa">\'+r.msg+"</div>"; return; }' +
+  '    var prev = r.previa.length ? "\\n\\nPrimeiras:\\n• "+r.previa.join("\\n• ") : "";' +
+  '    document.getElementById("info").innerHTML=\'<div class="caixa">\'+("Encontrei "+r.total+" linha(s):\\n• Novas: "+r.novas+"\\n• Já existem (puladas): "+r.duplicadas+prev)+"</div>";' +
+  '    if(r.novas>0){ document.getElementById("bloco").style.display="block"; document.getElementById("btnImp").textContent="Importar "+r.novas+" empresa(s)"; }' +
+  '  }).withFailureHandler(function(e){ document.getElementById("btnVer").disabled=false; msg("Erro: "+e.message,"erro"); }).analisarImportacao();' +
+  '}' +
+  'function importar(){' +
+  '  document.getElementById("btnImp").disabled=true;' +
+  '  msg("Importando, aguarde...","load");' +
+  '  google.script.run.withSuccessHandler(function(r){' +
+  '    document.getElementById("btnImp").disabled=false;' +
+  '    msg(r.msg, r.ok?"ok":"erro");' +
+  '    if(r.ok){ document.getElementById("bloco").style.display="none"; document.getElementById("info").innerHTML=""; }' +
+  '  }).withFailureHandler(function(e){ document.getElementById("btnImp").disabled=false; msg("Erro: "+e.message,"erro"); }).executarImportacao();' +
+  '}' +
+  '</script></body></html>';
 }
