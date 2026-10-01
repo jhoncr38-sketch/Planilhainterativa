@@ -3,8 +3,9 @@
  * Para a planilha CONTROLE_EMPRESAS_2026.
  *
  * Layout:
- *   CADASTRO: A=Empresa B=CNPJ C=Regime D=Faz Folha? E=Faz SPED? F=Ativa?
- *             G=Perfil H=IE I=IM J=Senha        (dados a partir da linha 3)
+ *   CADASTRO: A=Empresa B=CNPJ C=Regime (fixas); as demais (Faz Folha?,
+ *             Faz SPED?, Faz EFD Contrib.?, Ativa?, Perfil, IE, IM, Senha)
+ *             são achadas pelo cabeçalho  (dados a partir da linha 3)
  *   Abas de etapa: A=MÊS B=EMPRESA C=CNPJ(fórmula) D=REGIME(fórmula)
  *             demais colunas = status            (dados a partir da linha 3)
  *   PAINEL: D4 = mês selecionado
@@ -22,9 +23,11 @@ const LIMITE_LINHAS = 1500;   // teto das faixas (listas e cores vão até aqui 
 // colFeito = coluna que sinaliza "concluído"  | colsMoeda = colunas em R$
 // colTotal = coluna com fórmula de soma       | colData   = coluna de data
 // flag     = quem entra nesta aba
+// colIcms / colContrib = colunas da EFD ICMS/IPI e da EFD Contribuições
 const ABAS_ETAPA = {
   '1. FOLHA':       { flag: 'folha', ultimaCol: 9,  colFeito: 9 },
-  '2. SPED':        { flag: 'sped',  ultimaCol: 11, colFeito: 11, colData: 9 },
+  '2. SPED':        { flag: 'sped',  ultimaCol: 11, colFeito: 11, colData: 9,
+                      colIcms: 7, colContrib: 8 },
   '3. FATURAMENTO': { flag: null,    ultimaCol: 10, colFeito: 9,
                       colsMoeda: [5, 6, 7, 8], colTotal: 8 },
   '4. CONSULTAS':   { flag: null,    ultimaCol: 6,  colFeito: 6 },
@@ -34,6 +37,17 @@ const MESES = ['JANEIRO','FEVEREIRO','MARÇO','ABRIL','MAIO','JUNHO',
                'JULHO','AGOSTO','SETEMBRO','OUTUBRO','NOVEMBRO','DEZEMBRO'];
 
 const REGIMES = ['Simples Nacional', 'Simples Híbrido', 'Lucro Presumido', 'MEI'];
+
+// CADASTRO: EMPRESA, CNPJ e REGIME ficam fixos em A, B e C (as fórmulas das
+// abas de etapa buscam neles). As outras colunas são achadas pelo CABEÇALHO
+// da linha 2 — assim dá para inserir uma coluna nova sem quebrar o script.
+const CAD_CABECALHOS = {
+  folha: 'FAZ FOLHA?', sped: 'FAZ SPED?', contrib: 'FAZ EFD CONTRIB.?', ativa: 'ATIVA?',
+  perfil: 'PERFIL', ie: 'INSCRIÇÃO ESTADUAL', im: 'INSCRIÇÃO MUNICIPAL', senha: 'SENHA',
+};
+const CAD_OBRIGATORIAS = ['folha', 'sped', 'ativa'];
+
+const NAO_SE_APLICA = 'Não se aplica';
 
 const COR_AZUL = '#2E5496';
 const COR_NAVY = '#1F3864';
@@ -54,9 +68,8 @@ function onOpen() {
     .addItem('Excluir empresa de vez', 'dialogoExcluir')
     .addItem('Excluir um mês inteiro', 'dialogoExcluirMes')
     .addSeparator()
+    .addItem('Ficha da empresa', 'dialogoFicha')
     .addItem('Conferir faturamentos suspeitos', 'dialogoAnomalias')
-    .addItem('Mostrar / atualizar calendário', 'mostrarCalendario')
-    .addItem('Desativar calendário', 'desativarCalendario')
     .addItem('Bloco de notas', 'abrirBlocoDeNotas')
     .addItem('Virar o ano', 'virarOAno')
     .addSeparator()
@@ -65,6 +78,15 @@ function onOpen() {
 
   // abre já no mês atual (você continua podendo trocar pelo dropdown)
   try { irParaMesAtual(); } catch (e) { /* onOpen em modo limitado às vezes não escreve */ }
+}
+
+/** Coloca o seletor de mês (PAINEL!D4) no mês atual. Chamado ao abrir a
+ *  planilha. Não trava nada: você segue trocando o mês pelo dropdown quando
+ *  quiser — só no próximo abrir ele volta pro mês de hoje. */
+function irParaMesAtual() {
+  const painel = planilha().getSheetByName('PAINEL');
+  if (!painel) return;
+  painel.getRange('D4').setValue(MESES[new Date().getMonth()]);
 }
 
 // ============================================================
@@ -112,25 +134,58 @@ function ultimaLinhaCol(aba, letra) {
 /** Abas de etapa: a coluna EMPRESA (B) manda. */
 function ultimaLinha(aba) { return ultimaLinhaCol(aba, 'B'); }
 
-/** Lê o CADASTRO -> [{empresa, folha, sped, ativa, linha}, ...] */
+/** Posição (1 = A) de cada coluna do CADASTRO, achada pelo cabeçalho da
+ *  linha 2. 0 = a coluna não existe (ex.: FAZ EFD CONTRIB.? antes de criada).
+ *  Recusa se faltar uma obrigatória: ler a coluna errada (ex.: tratar PERFIL
+ *  como ATIVA?) é pior que parar. */
+function colunasCadastro() {
+  const aba = planilha().getSheetByName('CADASTRO');
+  const cab = aba.getRange(2, 1, 1, Math.max(aba.getLastColumn(), 1)).getValues()[0]
+                 .map(v => String(v).replace(/\s+/g, ' ').trim().toUpperCase());
+  const col = { empresa: 1, cnpj: 2, regime: 3, total: cab.length };
+  for (const k in CAD_CABECALHOS) col[k] = cab.indexOf(CAD_CABECALHOS[k]) + 1;
+  const faltam = CAD_OBRIGATORIAS.filter(k => !col[k]);
+  if (faltam.length > 0) {
+    throw new Error('No CADASTRO (linha 2) não achei a coluna ' +
+      faltam.map(k => '"' + CAD_CABECALHOS[k] + '"').join(', ') +
+      '. Alguém renomeou o cabeçalho? O texto precisa bater exatamente.');
+  }
+  return col;
+}
+
+/** Lê o CADASTRO -> [{empresa, folha, sped, contrib, ativa, linha}, ...]
+ *  contrib (EFD Contribuições): true = faz, false = não faz, null = em branco. */
 function lerCadastro() {
   const aba = planilha().getSheetByName('CADASTRO');
   const teto = Math.min(aba.getLastRow(), LIMITE_LINHAS);
   if (teto < LINHA_INICIAL) return [];
-  const dados = aba.getRange(LINHA_INICIAL, 1, teto - LINHA_INICIAL + 1, 6).getValues();
+  const col = colunasCadastro();
+  const dados = aba.getRange(LINHA_INICIAL, 1, teto - LINHA_INICIAL + 1, col.total).getValues();
+  const campo = (l, c) => c ? String(l[c - 1]).trim().toUpperCase() : '';
+  const ehNao = t => t === 'NÃO' || t === 'NAO';
   const lista = [];
   dados.forEach((l, i) => {
     if (l[0] === '' || l[0] === null) return;
-    const ativaTxt = String(l[5]).trim().toUpperCase();
+    const contribTxt = campo(l, col.contrib);
     lista.push({
       empresa: l[0],
-      folha: String(l[3]).trim().toUpperCase() === 'SIM',
-      sped:  String(l[4]).trim().toUpperCase() === 'SIM',
-      ativa: ativaTxt !== 'NÃO' && ativaTxt !== 'NAO',   // em branco = ativa
+      folha: campo(l, col.folha) === 'SIM',
+      sped:  campo(l, col.sped) === 'SIM',
+      contrib: contribTxt === 'SIM' ? true : ehNao(contribTxt) ? false : null,
+      ativa: !ehNao(campo(l, col.ativa)),                 // em branco = ativa
       linha: LINHA_INICIAL + i,
     });
   });
   return lista;
+}
+
+/** Valor padrão de FAZ EFD CONTRIB.? pelo regime: o Simples (e o MEI) é
+ *  dispensado da EFD Contribuições; o Lucro Presumido entrega. */
+function contribPadrao(regime) {
+  const r = String(regime).trim();
+  if (r === 'Lucro Presumido') return 'Sim';
+  if (r === 'Simples Nacional' || r === 'Simples Híbrido' || r === 'MEI') return 'Não';
+  return '';
 }
 
 function acharEmpresa(nome) {
@@ -152,8 +207,21 @@ function listarEmpresas() {
 function entraNaEtapa(empresa, flag) {
   if (flag === null) return true;
   if (flag === 'folha') return empresa.folha;
-  if (flag === 'sped') return empresa.sped;
+  if (flag === 'sped') return empresa.sped || empresa.contrib === true;   // SPED fiscal ou só a EFD Contribuições
   return true;
+}
+
+/** Na 2. SPED, linha nova já nasce com "Não se aplica" na EFD que a empresa
+ *  não faz: EFD ICMS/IPI quando ela entrou só pela EFD Contribuições
+ *  (FAZ SPED? = Não), e EFD CONTRIBUIÇÕES quando FAZ EFD CONTRIB.? = Não.
+ *  FAZ EFD CONTRIB.? em branco = como sempre foi (nada marcado). */
+function marcarNaoSeAplica(aba, nomeAba, linha, empresas) {
+  const cfg = ABAS_ETAPA[nomeAba];
+  if (!cfg.colIcms) return;
+  const icms    = empresas.map(e => [e.sped ? '' : NAO_SE_APLICA]);
+  const contrib = empresas.map(e => [e.contrib === false ? NAO_SE_APLICA : '']);
+  if (icms.some(v => v[0]))    aba.getRange(linha, cfg.colIcms, empresas.length, 1).setValues(icms);
+  if (contrib.some(v => v[0])) aba.getRange(linha, cfg.colContrib, empresas.length, 1).setValues(contrib);
 }
 
 function mesDoPainel() {
@@ -207,18 +275,6 @@ function formatarEtapa(aba, nomeAba, linhaInicio, qtd) {
   if (cfg.colData)  aba.getRange(linhaInicio, cfg.colData, qtd, 1).setNumberFormat('dd/mm/yyyy');
 }
 
-function formatarComparativo(aba, linha) {
-  aba.getRange(linha, 2, 1, 14)
-     .setFontFamily('Arial').setFontSize(10).setFontColor('#000000')
-     .setBackground('#ffffff').setFontWeight('normal')
-     .setHorizontalAlignment('center').setVerticalAlignment('middle')
-     .setBorder(true, true, true, true, true, true,
-                '#b7b7b7', SpreadsheetApp.BorderStyle.SOLID);
-  aba.getRange(linha, 2).setFontWeight('bold').setHorizontalAlignment('left');
-  aba.getRange(linha, 3, 1, 13).setNumberFormat('R$ #,##0.00');
-  aba.getRange(linha, 15).setFontWeight('bold');   // TOTAL ANO
-}
-
 /** Refaz o filtro cobrindo todas as linhas de dados.
  *  Sem isso, meses novos não aparecem na lista do funil. */
 function ajustarFiltro(aba, ultimaCol) {
@@ -227,41 +283,6 @@ function ajustarFiltro(aba, ultimaCol) {
   if (filtro) filtro.remove();
   if (fim < LINHA_INICIAL) return;
   aba.getRange(2, 1, fim - 1, ultimaCol).createFilter();
-}
-
-/** Insere a empresa na tabela do COMPARATIVO.
- *  O TOTAL GERAL puxa direto do FATURAMENTO, então não precisa ser refeito. */
-function adicionarNoComparativo(nome) {
-  const aba = planilha().getSheetByName('COMPARATIVO');
-  if (!aba) return false;
-
-  const colB = aba.getRange('B1:B' + aba.getLastRow()).getValues()
-                  .map(l => String(l[0]).trim());
-  const linhaCabecalho = colB.indexOf('EMPRESA') + 1;
-  const linhaTotal     = colB.indexOf('TOTAL GERAL') + 1;
-  if (linhaCabecalho === 0 || linhaTotal === 0) return false;
-
-  for (let r = linhaCabecalho + 1; r < linhaTotal; r++) {
-    if (colB[r - 1].toUpperCase() === nome.toUpperCase()) return true;   // já existe
-  }
-
-  aba.insertRowBefore(linhaTotal);
-  const nova = linhaTotal;
-
-  formatarComparativo(aba, nova);
-  aba.getRange(nova, 2).setValue(nome);
-
-  const ini = LINHA_INICIAL, fim = LIMITE_LINHAS;
-  const formulas = [];
-  for (let m = 0; m < MESES.length; m++) {
-    formulas.push(
-      "=IFERROR(SUMIFS('3. FATURAMENTO'!$H$" + ini + ":$H$" + fim +
-      ";'3. FATURAMENTO'!$B$" + ini + ":$B$" + fim + ";$B" + nova +
-      ";'3. FATURAMENTO'!$A$" + ini + ":$A$" + fim + ";\"" + MESES[m] + "\");0)");
-  }
-  formulas.push('=SUM(C' + nova + ':N' + nova + ')');
-  aba.getRange(nova, 3, 1, 13).setFormulas([formulas]);
-  return true;
 }
 
 // ============================================================
@@ -402,6 +423,7 @@ function executarAbrirMes(mes) {
 
     formatarEtapa(aba, nomeAba, linha, doMes.length);
     aba.getRange(linha, 1, doMes.length, 2).setValues(doMes.map(e => [mes, e.empresa]));
+    marcarNaoSeAplica(aba, nomeAba, linha, doMes);
 
     const fCnpj = [], fRegime = [];
     for (let i = 0; i < doMes.length; i++) {
@@ -426,7 +448,6 @@ function executarAbrirMes(mes) {
   }
 
   planilha().getSheetByName('PAINEL').getRange('D4').setValue(mes);
-  try { atualizarCalendario(); } catch (e) { /* calendário nunca trava o mês */ }
   return { ok: true, msg: mes + ' aberto!\n' + resumo.join('\n') };
 }
 
@@ -441,6 +462,8 @@ function dialogoCadastro() {
 }
 
 function htmlCadastro() {
+  let temContrib = false;     // o botão só aparece depois que a coluna existir
+  try { temContrib = colunasCadastro().contrib > 0; } catch (e) { /* cabeçalho estranho: a gravação avisa */ }
   return '<!DOCTYPE html><html><head><base target="_top">' + estiloDialogo() + '</head><body>' +
   '<div class="sub">Dados da empresa e em quais etapas ela entra.</div>' +
   '<label>Nome da empresa</label>' +
@@ -460,8 +483,13 @@ function htmlCadastro() {
   '  <div><label>Faz o SPED?</label><div class="toggle">' +
   '    <button id="spedSim" onclick="setSped(true)">Sim</button>' +
   '    <button id="spedNao" onclick="setSped(false)">Não</button></div></div>' +
+  (temContrib ?
+  '  <div><label>Faz EFD Contrib.?</label><div class="toggle">' +
+  '    <button id="contribSim" onclick="setContrib(true)">Sim</button>' +
+  '    <button id="contribNao" onclick="setContrib(false)">Não</button></div></div>' : '') +
   '</div>' +
   '<div class="aviso" id="dica">Ela entra nesse mês e em todos os meses já abertos depois dele. ' +
+  (temContrib ? 'SPED = EFD ICMS/IPI. Quem faz só a EFD Contribuições: SPED = Não e EFD Contrib. = Sim. ' : '') +
   'Senha, perfil e inscrições você preenche direto no CADASTRO.</div>' +
   '<div class="botoes">' +
   '  <button class="sec" onclick="google.script.host.close()">Fechar</button>' +
@@ -475,15 +503,22 @@ function htmlCadastro() {
   '  var o = document.createElement("option");' +
   '  o.value = REGIMES[i]; o.text = REGIMES[i]; selReg.add(o);' +
   '}' +
-  'var fazFolha = false, fazSped = true;' +
+  'var TEM_CONTRIB = ' + temContrib + ';' +
+  'var fazFolha = false, fazSped = true, fazContrib = false;' +
   'function pinta() {' +
   '  document.getElementById("folhaSim").className = fazFolha ? "on" : "";' +
   '  document.getElementById("folhaNao").className = fazFolha ? "" : "off";' +
   '  document.getElementById("spedSim").className  = fazSped  ? "on" : "";' +
   '  document.getElementById("spedNao").className  = fazSped  ? "" : "off";' +
+  '  if (!TEM_CONTRIB) return;' +
+  '  document.getElementById("contribSim").className = fazContrib ? "on" : "";' +
+  '  document.getElementById("contribNao").className = fazContrib ? "" : "off";' +
   '}' +
-  'function setFolha(v) { fazFolha = v; pinta(); }' +
-  'function setSped(v)  { fazSped  = v; pinta(); }' +
+  'function setFolha(v)   { fazFolha   = v; pinta(); }' +
+  'function setSped(v)    { fazSped    = v; pinta(); }' +
+  'function setContrib(v) { fazContrib = v; pinta(); }' +
+  // EFD Contribuições segue o regime (Lucro Presumido = Sim), mas dá para trocar
+  'selReg.addEventListener("change", function () { setContrib(selReg.value === "Lucro Presumido"); });' +
   'pinta();' +
   'var selMes = document.getElementById("mesIni");' +
   'google.script.run.withSuccessHandler(function (meses) {' +
@@ -534,6 +569,7 @@ function htmlCadastro() {
   '      regime: selReg.value,' +
   '      folha: fazFolha ? "Sim" : "Não",' +
   '      sped: fazSped ? "Sim" : "Não",' +
+  '      contrib: TEM_CONTRIB ? (fazContrib ? "Sim" : "Não") : "",' +
   '      mesInicial: selMes.value' +
   '    });' +
   '}' +
@@ -548,18 +584,23 @@ function executarCadastro(d) {
   const nome = String(d.nome).trim();
   if (!nome) return { ok: false, msg: 'Digite o nome da empresa.' };
 
-  const faltando = abasFaltando(abasNecessarias(['CADASTRO', 'COMPARATIVO']));
+  const faltando = abasFaltando(abasNecessarias(['CADASTRO']));
   if (faltando.length > 0) return { ok: false, msg: msgAbasFaltando(faltando) };
 
   if (acharEmpresa(nome)) return { ok: false, msg: '"' + nome + '" já está no cadastro.' };
   if (REGIMES.indexOf(d.regime) === -1) return { ok: false, msg: 'Regime inválido.' };
 
-  // CADASTRO
+  // CADASTRO (colunas pelo cabeçalho)
   const cad = planilha().getSheetByName('CADASTRO');
+  const col = colunasCadastro();
+  const contrib = col.contrib ? (d.contrib === 'Sim' ? 'Sim' : d.contrib === 'Não' ? 'Não' : '') : '';
   const linhaCad = ultimaLinhaCol(cad, 'A') + 1;
-  cad.getRange(linhaCad, 1, 1, 6)
-     .setValues([[nome, d.cnpj, d.regime, d.folha, d.sped, 'Sim']]);
-  cad.getRange(linhaCad, 1, 1, 10)
+  const nova = new Array(col.total).fill('');
+  nova[0] = nome; nova[1] = d.cnpj; nova[2] = d.regime;
+  nova[col.folha - 1] = d.folha; nova[col.sped - 1] = d.sped; nova[col.ativa - 1] = 'Sim';
+  if (col.contrib) nova[col.contrib - 1] = contrib;
+  cad.getRange(linhaCad, 1, 1, col.total).setValues([nova]);
+  cad.getRange(linhaCad, 1, 1, col.total)
      .setFontFamily('Arial').setFontSize(10).setVerticalAlignment('middle')
      .setHorizontalAlignment('center')
      .setBorder(true, true, true, true, true, true,
@@ -568,7 +609,8 @@ function executarCadastro(d) {
 
   // Em quais meses ela entra: do mês escolhido em diante, só os já abertos
   const iIni = d.mesInicial ? MESES.indexOf(String(d.mesInicial).trim().toUpperCase()) : -1;
-  const empresa = { empresa: nome, folha: d.folha === 'Sim', sped: d.sped === 'Sim' };
+  const empresa = { empresa: nome, folha: d.folha === 'Sim', sped: d.sped === 'Sim',
+                    contrib: contrib === 'Sim' ? true : contrib === 'Não' ? false : null };
   const inseridas = [];
   const mesesUsados = {};
 
@@ -590,6 +632,7 @@ function executarCadastro(d) {
 
       formatarEtapa(aba, nomeAba, linha, alvos.length);
       aba.getRange(linha, 1, alvos.length, 2).setValues(alvos.map(m => [m, nome]));
+      marcarNaoSeAplica(aba, nomeAba, linha, alvos.map(() => empresa));
 
       const fCnpj = [], fRegime = [], fTotal = [];
       for (let i = 0; i < alvos.length; i++) {
@@ -608,11 +651,6 @@ function executarCadastro(d) {
     }
   }
 
-  // A aba existe (checado na entrada), então um "false" aqui só pode ser
-  // layout fora do esperado — vale avisar em vez de omitir da lista.
-  const noComparativo = adicionarNoComparativo(nome);
-  if (noComparativo) inseridas.push('COMPARATIVO');
-
   const meses = MESES.filter(m => mesesUsados[m]);
   const onde = meses.length === 0
     ? 'Só no cadastro (nenhum mês)'
@@ -621,14 +659,11 @@ function executarCadastro(d) {
                             ' (' + meses.length + ')');
 
   const total = lerCadastro().length;
-  const aviso = noComparativo ? '' :
-    '\n\n⚠ NÃO entrou no COMPARATIVO: não achei as linhas "EMPRESA" e\n' +
-    '"TOTAL GERAL" na coluna B. O faturamento dela não vai somar lá.';
 
   return { ok: true, msg: '✔ ' + nome + ' cadastrada (' + d.regime + ')' +
                           '\n' + onde +
-                          '\nAbas: ' + inseridas.join(', ') +
-                          '\nTotal no cadastro: ' + total + aviso };
+                          (inseridas.length ? '\nAbas: ' + inseridas.join(', ') : '') +
+                          '\nTotal no cadastro: ' + total };
 }
 
 // ============================================================
@@ -643,7 +678,7 @@ function dialogoRenomear() {
 
 function htmlRenomear() {
   return '<!DOCTYPE html><html><head><base target="_top">' + estiloDialogo() + '</head><body>' +
-  '<div class="sub">Troca o nome em tudo de uma vez: cadastro, as 4 abas e o comparativo.</div>' +
+  '<div class="sub">Troca o nome em tudo de uma vez: o cadastro e as 4 abas.</div>' +
   '<label>Empresa</label>' +
   '<select id="emp"><option value="">carregando...</option></select>' +
   '<label>Novo nome</label>' +
@@ -697,17 +732,17 @@ function htmlRenomear() {
   '</script></body></html>';
 }
 
-/** Chamada pela janela. O nome é a chave que liga tudo: troca no CADASTRO,
- *  nas 4 abas (todos os meses) e no COMPARATIVO de uma vez. Devolve {ok, msg}.
+/** Chamada pela janela. O nome é a chave que liga tudo: troca no CADASTRO
+ *  e nas 4 abas (todos os meses) de uma vez. Devolve {ok, msg}.
  *  Renomear em 3 das 4 abas é pior que não renomear: as linhas da aba que
- *  faltou viram órfãs e o faturamento delas some do COMPARATIVO. */
+ *  faltou viram órfãs (perdem CNPJ/regime e somem da ficha da empresa). */
 function executarRenomear(velho, novo) {
   velho = String(velho).trim();
   novo  = String(novo).trim();
   if (!velho) return { ok: false, msg: 'Escolha a empresa.' };
   if (!novo)  return { ok: false, msg: 'Digite o novo nome.' };
 
-  const faltando = abasFaltando(abasNecessarias(['CADASTRO', 'COMPARATIVO']));
+  const faltando = abasFaltando(abasNecessarias(['CADASTRO']));
   if (faltando.length > 0) return { ok: false, msg: msgAbasFaltando(faltando) };
 
   const emp = acharEmpresa(velho);
@@ -739,18 +774,6 @@ function executarRenomear(velho, novo) {
       if (String(valores[i][0]).trim().toUpperCase() === alvo) { valores[i][0] = novo; qtd++; }
     }
     if (qtd > 0) { faixa.setValues(valores); trocas.push(nomeAba + ': ' + qtd); }
-  }
-
-  const comp = planilha().getSheetByName('COMPARATIVO');
-  if (comp) {
-    const colB = comp.getRange('B1:B' + comp.getLastRow()).getValues();
-    for (let i = 0; i < colB.length; i++) {
-      if (String(colB[i][0]).trim().toUpperCase() === alvo) {
-        comp.getRange(i + 1, 2).setValue(novo);
-        trocas.push('COMPARATIVO: 1');
-        break;
-      }
-    }
   }
 
   return { ok: true, msg: '✔ Renomeada!\n"' + velho + '"  ->  "' + novo +
@@ -844,7 +867,7 @@ function executarAtivar(nome) {
 
   const novoAtiva = !emp.ativa;
   planilha().getSheetByName('CADASTRO')
-            .getRange(emp.linha, 6).setValue(novoAtiva ? 'Sim' : 'Não');
+            .getRange(emp.linha, colunasCadastro().ativa).setValue(novoAtiva ? 'Sim' : 'Não');
 
   return { ok: true, ativa: novoAtiva,
            msg: '✔ ' + emp.empresa + ' agora está ' + (novoAtiva ? 'ATIVA' : 'INATIVA') + '.' };
@@ -960,7 +983,7 @@ function analisarEmpresa(nome) {
       ? 'Isso apaga o cadastro e ' + total + ' linha(s) de histórico:\n' + detalhe.join('\n') +
         '\n\nISSO NÃO TEM VOLTA. Se a empresa só saiu do escritório, cancele e use\n' +
         '"Ativar / desativar" — assim o histórico é preservado.'
-      : 'Ela não tem histórico em nenhum mês. Só sairá do cadastro (e do comparativo).');
+      : 'Ela não tem histórico em nenhum mês. Só sairá do cadastro.');
 
   return { existe: true, nome: emp.empresa, temHistorico: temHistorico, total: total, resumo: resumo };
 }
@@ -972,7 +995,7 @@ function analisarEmpresa(nome) {
 function executarExcluirEmpresa(nome, confirmacao) {
   nome = String(nome).trim();
 
-  const faltando = abasFaltando(abasNecessarias(['CADASTRO', 'COMPARATIVO']));
+  const faltando = abasFaltando(abasNecessarias(['CADASTRO']));
   if (faltando.length > 0) return { ok: false, msg: msgAbasFaltando(faltando) };
 
   const emp = acharEmpresa(nome);
@@ -1000,14 +1023,6 @@ function executarExcluirEmpresa(nome, confirmacao) {
     ajustarFiltro(aba, cfg.ultimaCol);
   }
 
-  const comp = planilha().getSheetByName('COMPARATIVO');
-  if (comp) {
-    const colB = comp.getRange('B1:B' + comp.getLastRow()).getValues();
-    for (let i = colB.length - 1; i >= 0; i--) {
-      if (String(colB[i][0]).trim().toUpperCase() === alvo) { comp.deleteRow(i + 1); break; }
-    }
-  }
-
   const cad = planilha().getSheetByName('CADASTRO');
   const colA = cad.getRange('A1:A' + cad.getLastRow()).getValues();
   for (let i = colA.length - 1; i >= 0; i--) {
@@ -1021,9 +1036,9 @@ function executarExcluirEmpresa(nome, confirmacao) {
 //  6. VIRAR O ANO
 // ============================================================
 
-/** Cria uma cópia do arquivo para o ano novo: mantém o CADASTRO e as
- *  empresas do COMPARATIVO, e zera as abas de etapa. O arquivo atual
- *  não é alterado — ele fica como histórico do ano que passou. */
+/** Cria uma cópia do arquivo para o ano novo: mantém o CADASTRO e zera
+ *  as abas de etapa. O arquivo atual não é alterado — ele fica como
+ *  histórico do ano que passou. */
 function virarOAno() {
   const ui = SpreadsheetApp.getUi();
 
@@ -1034,8 +1049,8 @@ function virarOAno() {
 
   const conf = ui.alert('Virar o ano',
     'Vou criar uma CÓPIA chamada "CONTROLE EMPRESAS ' + ano + '".\n\n' +
-    'Na cópia: o CADASTRO e as empresas do COMPARATIVO são mantidos,\n' +
-    'e as abas de etapa ficam zeradas para começar o ano.\n\n' +
+    'Na cópia: o CADASTRO é mantido e as abas de etapa ficam\n' +
+    'zeradas para começar o ano.\n\n' +
     'Este arquivo aqui NÃO é alterado — fica como histórico.\n\nPode fazer?',
     ui.ButtonSet.YES_NO);
   if (conf !== ui.Button.YES) return;
@@ -1063,7 +1078,7 @@ function virarOAno() {
   copia.getSheetByName('PAINEL').getRange('D4').setValue('JANEIRO');
 
   ui.alert('Ano virado!\n\nArquivo novo: CONTROLE EMPRESAS ' + ano +
-           '\n\nAbra ele e use ⚙️ Controle → Abrir novo mês → JANEIRO.\n\nLink:\n' + copia.getUrl());
+           '\n\nAbra ele e use 🧮 Modo Contador → Abrir novo mês → JANEIRO.\n\nLink:\n' + copia.getUrl());
 }
 
 // ============================================================
@@ -1234,12 +1249,12 @@ function analisarMes(mes) {
     totalLinhas += doMes.length;
     detalhe.push('• ' + nomeAba + ': ' + doMes.length + ' linha(s)');
 
-    // trabalho feito = status marcado (fora "Pendente" e vazio)
+    // trabalho feito = status marcado (fora "Pendente", "Não se aplica" e vazio)
     doMes.forEach(l => {
       for (let c = 4; c < cfg.ultimaCol; c++) {
         if (cfg.colTotal && c === cfg.colTotal - 1) continue;
         const v = String(l[c]).trim();
-        if (v !== '' && v !== 'Pendente') preenchidos++;
+        if (v !== '' && v !== 'Pendente' && v !== NAO_SE_APLICA) preenchidos++;   // N/A já nasce marcado
       }
       if (cfg.colTotal) {
         const t = l[cfg.colTotal - 1];
@@ -1305,7 +1320,6 @@ function executarExcluirMes(mes, confirmacao) {
     const restantes = mesesAbertos();
     painel.getRange('D4').setValue(restantes.length ? restantes[restantes.length - 1] : 'JANEIRO');
   }
-  try { atualizarCalendario(); } catch (e) { /* calendário nunca trava a exclusão */ }
 
   return { ok: true, msg: '✔ ' + mes + ' apagado. ' + apagadas + ' linha(s) removidas.\n' +
                           'Agora dá para abrir o mês de novo, se quiser.' };
@@ -1471,8 +1485,9 @@ function itensGuia() {
   return [
     ['🗓️', 'Abrir novo mês', 'Monta o mês novo com as empresas ativas nas abas certas.'],
     ['🏢', 'Cadastrar empresa', 'Adiciona uma empresa e escolhe a partir de qual mês ela entra.'],
-    ['✏️', 'Renomear empresa', 'Troca o nome em tudo de uma vez (cadastro, abas e comparativo).'],
+    ['✏️', 'Renomear empresa', 'Troca o nome em tudo de uma vez (cadastro e as 4 abas).'],
     ['🔘', 'Ativar / desativar', 'Tira a empresa dos meses novos sem perder o histórico.'],
+    ['📇', 'Ficha da empresa', 'O ano inteiro de uma empresa numa tela: status, faturamento e notas.'],
     ['🔎', 'Conferir suspeitos', 'Aponta faturamentos fora do padrão da empresa (possível erro).'],
     ['🔄', 'Virar o ano', 'Cria a cópia do próximo ano com o cadastro e zera as etapas.'],
   ];
@@ -1585,315 +1600,7 @@ function htmlSobre() {
 }
 
 // ============================================================
-//  11. CALENDÁRIO DE VENCIMENTOS  (no PAINEL, colunas H:N)
-// ============================================================
-//  Lê a aba VENCIMENTOS (MÊS | DIA | OBRIGAÇÃO | CATEGORIA) e pinta o
-//  calendário do mês selecionado (PAINEL!D4) a partir da coluna H.
-//  É pintado com VALORES fixos — sem fórmula viva —, então não entra no
-//  recálculo da planilha. Repinta: no botão do menu, ao trocar o mês em
-//  D4 (onEdit) e ao abrir/excluir um mês.
-// ============================================================
-
-const CAL_COL         = 8;    // coluna H
-const CAL_LIN_TITULO  = 7;    // H7 (mês / ano) — alinhado com a tabela de etapas
-const CAL_LIN_CAB     = 8;    // H8 (SEG..DOM)
-const CAL_LIN_GRADE   = 9;    // H9 (primeira semana; 6 semanas até H14)
-const CAL_LIN_LEGENDA = 16;   // H16
-const CAL_MAX_VENC    = 500;  // teto de linhas lidas na aba VENCIMENTOS
-
-// As categorias moram na própria aba VENCIMENTOS (colunas F:G), do lado das
-// obrigações — você adiciona, renomeia e troca a cor ali mesmo, sem tocar no
-// código e sem precisar abrir outra aba. A cor vem da bolinha (emoji).
-const CAT_COL_NOME  = 6;    // VENCIMENTOS coluna F (nome da categoria)
-const CAT_COL_EMOJI = 7;    // VENCIMENTOS coluna G (bolinha)
-const CAT_MAX       = 30;   // teto de categorias
-
-// paleta de bolinhas pra escolher (as únicas cores de círculo que há em emoji)
-const BOLINHAS_DISPONIVEIS = ['🔴', '🟠', '🟡', '🟢', '🔵', '🟣', '🟤', '⚫', '⚪'];
-
-// usadas só na primeira vez, pra semear a lista (depois é tudo manual)
-const CATEGORIAS_PADRAO = [
-  ['DAS',               '🟡'],
-  ['DCTFWeb',           '🔵'],
-  ['SPED',              '🔴'],
-  ['EFD-Reinf',         '🟢'],
-  ['Impostos Federais', '🟠'],
-  ['Outros',            '🟣'],
-];
-
-/** Lê as categorias (nome + bolinha) da aba VENCIMENTOS, colunas F:G. */
-function lerCategorias() {
-  const venc = planilha().getSheetByName('VENCIMENTOS');
-  if (!venc) return [];
-  const dados = venc.getRange(LINHA_INICIAL, CAT_COL_NOME, CAT_MAX, 2).getValues();
-  const cats = [];
-  dados.forEach(l => {
-    const nome = String(l[0]).trim();
-    if (nome) cats.push({ nome: nome, emoji: String(l[1]).trim() });
-  });
-  return cats;
-}
-
-/** Garante a mini-tabela de categorias na aba VENCIMENTOS (colunas F:G):
- *  título, cabeçalho, semente na primeira vez e o dropdown de bolinha.
- *  Idempotente: não sobrescreve o que você editou. */
-function garantirCategorias() {
-  const venc = planilha().getSheetByName('VENCIMENTOS');
-  if (!venc) return;
-
-  venc.getRange(1, CAT_COL_NOME).setValue('CATEGORIAS (edite aqui)')
-      .setFontWeight('bold').setFontColor(COR_NAVY);
-  venc.getRange(2, CAT_COL_NOME, 1, 2).setValues([['CATEGORIA', 'BOLINHA']])
-      .setFontWeight('bold').setBackground(COR_NAVY).setFontColor('#ffffff')
-      .setHorizontalAlignment('center');
-
-  if (lerCategorias().length === 0) {
-    venc.getRange(LINHA_INICIAL, CAT_COL_NOME, CATEGORIAS_PADRAO.length, 2)
-        .setValues(CATEGORIAS_PADRAO);
-  }
-
-  const dvBolinha = SpreadsheetApp.newDataValidation()
-                      .requireValueInList(BOLINHAS_DISPONIVEIS, true).build();
-  venc.getRange(LINHA_INICIAL, CAT_COL_EMOJI, CAT_MAX, 1).setDataValidation(dvBolinha);
-
-  venc.setColumnWidth(5, 30);                 // E: respiro entre as duas tabelas
-  venc.setColumnWidth(CAT_COL_NOME, 160);     // F
-  venc.setColumnWidth(CAT_COL_EMOJI, 75);     // G
-
-  // remove a tabela antiga de categorias que ficava na LISTAS (agora vive aqui)
-  const listas = planilha().getSheetByName('LISTAS');
-  if (listas) listas.getRange(1, 7, CAT_MAX + 1, 2).clearContent().clearDataValidations();
-}
-
-/** Aponta o dropdown de CATEGORIA (coluna D) para a lista de categorias
- *  ao lado (coluna F), pra ele crescer sozinho quando você adiciona uma nova. */
-function aplicarDropdownCategoria() {
-  const venc = planilha().getSheetByName('VENCIMENTOS');
-  if (!venc) return;
-  const dvCat = SpreadsheetApp.newDataValidation()
-      .requireValueInRange(venc.getRange(LINHA_INICIAL, CAT_COL_NOME, CAT_MAX, 1), true).build();
-  venc.getRange('D3:D' + CAL_MAX_VENC).setDataValidation(dvCat);
-}
-
-/** Ano do arquivo — tirado do nome (ex.: "...2026..."); cai no ano atual
- *  se não achar. Assim, ao "Virar o ano", o calendário acompanha sozinho. */
-function anoDoArquivo() {
-  const m = String(planilha().getName()).match(/(\d{4})/);
-  return m ? Number(m[1]) : new Date().getFullYear();
-}
-
-/** Chave de dia (ano-mês-dia) para comparar datas sem hora. */
-function ymd(d) {
-  return d.getFullYear() + '-' + (d.getMonth() + 1) + '-' + d.getDate();
-}
-
-/** Item de menu: garante a aba de config, desenha a moldura e pinta. */
-function mostrarCalendario() {
-  const painel = planilha().getSheetByName('PAINEL');
-  if (!painel) { SpreadsheetApp.getUi().alert('Não achei a aba PAINEL.'); return; }
-
-  PropertiesService.getDocumentProperties().setProperty('CALENDARIO', 'on');   // (re)liga
-  garantirAbaVencimentos();
-  garantirCategorias();
-  aplicarDropdownCategoria();
-  montarCalendario();
-  atualizarCalendario();
-  planilha().setActiveSheet(planilha().getSheetByName('VENCIMENTOS') || painel);
-
-  SpreadsheetApp.getUi().alert('Calendário pronto!\n\n' +
-    'Está tudo na aba VENCIMENTOS: os prazos (colunas A–D) e, ao lado, a lista\n' +
-    'de categorias e cores (colunas F–G) — pode renomear, adicionar e trocar a\n' +
-    'bolinha à vontade. O calendário, a legenda e o dropdown se atualizam sozinhos.');
-}
-
-/** Cria a aba VENCIMENTOS (se não existir) com cabeçalho, dropdowns e um
- *  exemplo. É de onde o calendário lê os prazos. */
-function garantirAbaVencimentos() {
-  const ss = planilha();
-  let aba = ss.getSheetByName('VENCIMENTOS');
-  if (aba) return aba;
-
-  aba = ss.insertSheet('VENCIMENTOS');
-
-  aba.getRange('A1').setValue(
-      'VENCIMENTOS — lance aqui os prazos de cada mês (o calendário do PAINEL lê daqui)')
-     .setFontWeight('bold').setFontColor(COR_NAVY).setFontSize(12);
-
-  aba.getRange('A2:D2').setValues([['MÊS', 'DIA', 'OBRIGAÇÃO', 'CATEGORIA']])
-     .setFontWeight('bold').setBackground(COR_NAVY).setFontColor('#ffffff')
-     .setHorizontalAlignment('center');
-
-  const dvMes = SpreadsheetApp.newDataValidation().requireValueInList(MESES, true).build();
-  const dvDia = SpreadsheetApp.newDataValidation().requireNumberBetween(1, 31).build();
-  aba.getRange('A3:A' + CAL_MAX_VENC).setDataValidation(dvMes);
-  aba.getRange('B3:B' + CAL_MAX_VENC).setDataValidation(dvDia);
-  // o dropdown de CATEGORIA (coluna D) é aplicado por aplicarDropdownCategoria()
-
-  // Exemplo (o do ABRIL que você mandou — pode editar/apagar à vontade).
-  aba.getRange('A3:D8').setValues([
-    ['ABRIL', 7,  'Folha',                  'Outros'],
-    ['ABRIL', 14, 'SPED EFD Contribuições', 'EFD-Reinf'],
-    ['ABRIL', 15, 'SPED ICMS',              'SPED'],
-    ['ABRIL', 20, 'Simples (DAS)',          'DAS'],
-    ['ABRIL', 25, 'DCTFWeb',                'DCTFWeb'],
-    ['ABRIL', 25, 'PIS e Cofins',           'Outros'],
-  ]);
-
-  aba.setColumnWidth(1, 110);
-  aba.setColumnWidth(2, 55);
-  aba.setColumnWidth(3, 230);
-  aba.setColumnWidth(4, 120);
-  aba.setFrozenRows(2);
-
-  return aba;
-}
-
-/** Desenha a moldura fixa do calendário (título, cabeçalho, legenda,
- *  larguras e bordas). Idempotente: pode rodar quantas vezes quiser. */
-function montarCalendario() {
-  const painel = planilha().getSheetByName('PAINEL');
-  if (!painel) return;
-
-  // limpa a faixa do calendário (H:N) antes de desenhar — assim, mudar a
-  // posição não deixa sobra do lugar antigo (merges, valores, bordas)
-  painel.getRange(1, CAL_COL, 20, 7).breakApart().clearContent().clearFormat();
-
-  // larguras só das colunas do calendário (H:N estão livres no PAINEL)
-  for (let c = CAL_COL; c < CAL_COL + 7; c++) painel.setColumnWidth(c, 64);
-
-  // título (mescla H2:N2) — o texto do mês entra no atualizarCalendario
-  const titulo = painel.getRange(CAL_LIN_TITULO, CAL_COL, 1, 7);
-  titulo.breakApart().merge();
-  titulo.setFontWeight('bold').setFontColor('#ffffff').setFontSize(13)
-        .setHorizontalAlignment('center').setVerticalAlignment('middle')
-        .setBackground(COR_NAVY);
-
-  // cabeçalho dos dias da semana
-  painel.getRange(CAL_LIN_CAB, CAL_COL, 1, 7)
-        .setValues([['SEG', 'TER', 'QUA', 'QUI', 'SEX', 'SÁB', 'DOM']])
-        .setFontWeight('bold').setFontColor('#808080').setFontSize(10)
-        .setHorizontalAlignment('center').setVerticalAlignment('middle')
-        .setBackground('#EEF2FA');
-
-  // moldura da grade (cabeçalho + 6 semanas)
-  painel.getRange(CAL_LIN_CAB, CAL_COL, 7, 7)
-        .setBorder(true, true, true, true, true, true,
-                   '#D9E1F2', SpreadsheetApp.BorderStyle.SOLID);
-
-  // legenda (mescla; montada a partir das categorias da aba VENCIMENTOS)
-  const legenda = painel.getRange(CAL_LIN_LEGENDA, CAL_COL, 1, 7);
-  legenda.breakApart().merge();
-  const textoLegenda = lerCategorias().map(c => c.emoji + ' ' + c.nome).join('   ');
-  painel.getRange(CAL_LIN_LEGENDA, CAL_COL).setValue(textoLegenda);
-  legenda.setFontSize(10).setHorizontalAlignment('center').setVerticalAlignment('middle');
-}
-
-/** Diz se o calendário está ligado (padrão: ligado; só 'off' desliga). */
-function calendarioAtivo() {
-  return PropertiesService.getDocumentProperties().getProperty('CALENDARIO') !== 'off';
-}
-
-/** Desliga o calendário: limpa a área no PAINEL e para de repintar.
- *  Pra religar, use "Mostrar / atualizar calendário". */
-function desativarCalendario() {
-  PropertiesService.getDocumentProperties().setProperty('CALENDARIO', 'off');
-  const painel = planilha().getSheetByName('PAINEL');
-  if (painel) painel.getRange(1, CAL_COL, 20, 7).breakApart().clearContent().clearFormat();
-  SpreadsheetApp.getUi().alert('Calendário desativado.\n\n' +
-    'A área dele no PAINEL foi limpa e ele não será mais desenhado.\n' +
-    'Pra ligar de novo: menu → Mostrar / atualizar calendário.');
-}
-
-/** Repinta o calendário do mês selecionado. Só valores/cores — sem fórmula. */
-function atualizarCalendario() {
-  const painel = planilha().getSheetByName('PAINEL');
-  if (!painel) return;
-  if (!calendarioAtivo()) return;               // respeita o "Desativar calendário"
-
-  const mesTexto = String(mesDoPainel()).trim().toUpperCase();
-  const mesNum = MESES.indexOf(mesTexto) + 1;
-  if (mesNum === 0) return;                       // D4 sem mês válido: não mexe
-
-  const ano = anoDoArquivo();
-
-  // mapa categoria -> bolinha (lido uma vez)
-  const mapaCat = {};
-  lerCategorias().forEach(c => { mapaCat[c.nome.toUpperCase()] = c.emoji; });
-
-  // dia -> bolinhas, lendo a aba VENCIMENTOS só do mês exibido
-  const bolinhas = {};
-  const venc = planilha().getSheetByName('VENCIMENTOS');
-  if (venc) {
-    const fim = Math.min(venc.getLastRow(), CAL_MAX_VENC);
-    if (fim >= LINHA_INICIAL) {
-      const dados = venc.getRange(LINHA_INICIAL, 1, fim - LINHA_INICIAL + 1, 4).getValues();
-      dados.forEach(l => {
-        if (String(l[0]).trim().toUpperCase() !== mesTexto) return;
-        const dia = Number(l[1]);
-        if (!(dia >= 1 && dia <= 31)) return;
-        const emoji = mapaCat[String(l[3]).trim().toUpperCase()] || '';
-        if (emoji) bolinhas[dia] = (bolinhas[dia] || '') + emoji;
-      });
-    }
-  }
-
-  // título
-  painel.getRange(CAL_LIN_TITULO, CAL_COL).setValue(mesTexto + ' / ' + ano);
-
-  // a grade começa na segunda-feira da semana do dia 1
-  const primeiro = new Date(ano, mesNum - 1, 1);
-  const desloca = (primeiro.getDay() + 6) % 7;    // 0 = seg ... 6 = dom
-  const inicio = new Date(ano, mesNum - 1, 1 - desloca);
-
-  const hojeStr = ymd(new Date());
-  const valores = [], fundos = [], fontes = [];
-
-  for (let sem = 0; sem < 6; sem++) {
-    const vRow = [], bRow = [], fRow = [];
-    for (let dow = 0; dow < 7; dow++) {
-      const d = new Date(inicio.getFullYear(), inicio.getMonth(),
-                         inicio.getDate() + sem * 7 + dow);
-      const noMes  = (d.getMonth() + 1 === mesNum);
-      const ehHoje = noMes && ymd(d) === hojeStr;
-      let txt = String(d.getDate());
-      if (noMes && bolinhas[d.getDate()]) txt += ' ' + bolinhas[d.getDate()];
-      vRow.push(txt);
-      bRow.push(ehHoje ? COR_NAVY : '#ffffff');
-      fRow.push(ehHoje ? '#ffffff' : (noMes ? '#000000' : '#B7B7B7'));
-    }
-    valores.push(vRow); fundos.push(bRow); fontes.push(fRow);
-  }
-
-  painel.getRange(CAL_LIN_GRADE, CAL_COL, 6, 7)
-        .setValues(valores).setBackgrounds(fundos).setFontColors(fontes)
-        .setFontFamily('Arial').setFontSize(11)
-        .setHorizontalAlignment('center').setVerticalAlignment('middle');
-}
-
-/** Repinta o calendário quando você troca o mês em PAINEL!D4, ou quando
- *  edita a aba VENCIMENTOS. Simples trigger: nunca atrapalha a edição. */
-function onEdit(e) {
-  try {
-    if (!e || !e.range) return;
-    const aba = e.range.getSheet();
-    const nome = aba.getName();
-    if (nome === 'VENCIMENTOS') { atualizarCalendario(); return; }
-    if (nome === 'PAINEL' && e.range.getA1Notation() === 'D4') atualizarCalendario();
-  } catch (err) { /* nunca quebra a digitação do usuário */ }
-}
-
-/** Coloca o seletor de mês (PAINEL!D4) no mês atual. Chamado ao abrir a
- *  planilha. Não trava nada: você segue trocando o mês pelo dropdown quando
- *  quiser — só no próximo abrir ele volta pro mês de hoje. */
-function irParaMesAtual() {
-  const painel = planilha().getSheetByName('PAINEL');
-  if (!painel) return;
-  painel.getRange('D4').setValue(MESES[new Date().getMonth()]);
-  try { atualizarCalendario(); } catch (e) { /* calendário repinta depois se falhar aqui */ }
-}
-
-// ============================================================
-//  12. BLOCO DE NOTAS  (barra lateral)
+//  11. BLOCO DE NOTAS  (barra lateral)
 // ============================================================
 //  Anotações gerais guardadas numa aba NOTAS (oculta):
 //    A=ID B=DATA C=PRIORIDADE D=EMPRESA E=DESCRIÇÃO F=STATUS G=DATA CONCLUSÃO
@@ -2216,12 +1923,13 @@ carregar();
 }
 
 // ============================================================
-//  13. IMPORTAR EMPRESAS EM MASSA  (aba IMPORTAR + barra lateral)
+//  12. IMPORTAR EMPRESAS EM MASSA  (aba IMPORTAR + barra lateral)
 // ============================================================
 //  Você cola a lista na aba IMPORTAR (EMPRESA | CNPJ | REGIME | PERFIL |
 //  IE | IM) e clica em Importar. O script cadastra todas de uma vez no
-//  CADASTRO e no COMPARATIVO, pulando as que já existem.
-//  Padrões: Ativa=Sim; Folha/SPED=Sim (MEI=Não); senha em branco.
+//  CADASTRO, pulando as que já existem.
+//  Padrões: Ativa=Sim; Folha/SPED=Sim (MEI=Não); EFD Contrib.=Sim só no
+//  Lucro Presumido; senha em branco.
 // ============================================================
 
 const IMPORTAR_ABA = 'IMPORTAR';
@@ -2273,7 +1981,7 @@ function lerImportar() {
 
 /** Confere a aba IMPORTAR antes de cadastrar. Devolve contagens + prévia. */
 function analisarImportacao() {
-  const faltando = abasFaltando(['CADASTRO', 'COMPARATIVO']);
+  const faltando = abasFaltando(['CADASTRO']);
   if (faltando.length > 0) return { ok: false, msg: msgAbasFaltando(faltando) };
 
   const linhas = lerImportar();
@@ -2297,20 +2005,21 @@ function analisarImportacao() {
   return { ok: true, vazio: false, total: linhas.length, novas: novas, duplicadas: duplicadas, previa: previa };
 }
 
-/** Cadastro em massa: cada nova empresa entra no CADASTRO e no COMPARATIVO.
+/** Cadastro em massa: cada nova empresa entra no CADASTRO.
  *  Pula duplicadas. Devolve {ok, msg}. */
 function executarImportacao() {
-  const faltando = abasFaltando(['CADASTRO', 'COMPARATIVO']);
+  const faltando = abasFaltando(['CADASTRO']);
   if (faltando.length > 0) return { ok: false, msg: msgAbasFaltando(faltando) };
 
   const linhas = lerImportar();
   if (linhas.length === 0) return { ok: false, msg: 'A aba IMPORTAR está vazia.' };
 
   const cad = planilha().getSheetByName('CADASTRO');
+  const col = colunasCadastro();
   const existentes = {};
   lerCadastro().forEach(e => { existentes[String(e.empresa).trim().toUpperCase()] = true; });
 
-  let cadastradas = 0, duplicadas = 0, semComparativo = 0;
+  let cadastradas = 0, duplicadas = 0;
   const vistos = {};
 
   linhas.forEach(l => {
@@ -2319,22 +2028,26 @@ function executarImportacao() {
     vistos[chave] = true;
 
     const ehMei = (l.regime === 'MEI') || (l.perfil.toUpperCase() === 'MEI');
-    const folha = ehMei ? 'Não' : 'Sim';
-    const sped  = ehMei ? 'Não' : 'Sim';
+    const nova = new Array(col.total).fill('');
+    nova[0] = l.nome; nova[1] = l.cnpj; nova[2] = l.regime;
+    nova[col.folha - 1] = ehMei ? 'Não' : 'Sim';
+    nova[col.sped - 1]  = ehMei ? 'Não' : 'Sim';
+    nova[col.ativa - 1] = 'Sim';
+    if (col.contrib) nova[col.contrib - 1] = ehMei ? 'Não' : contribPadrao(l.regime);
+    if (col.perfil)  nova[col.perfil - 1] = l.perfil;
+    if (col.ie)      nova[col.ie - 1] = l.ie;
+    if (col.im)      nova[col.im - 1] = l.im;
 
     const linhaCad = ultimaLinhaCol(cad, 'A') + 1;
-    cad.getRange(linhaCad, 1, 1, 10).setValues([[
-      l.nome, l.cnpj, l.regime, folha, sped, 'Sim', l.perfil, l.ie, l.im, '']]);
-    cad.getRange(linhaCad, 1, 1, 10)
+    // texto ANTES de gravar: depois o Google já teria comido o zero à esquerda
+    [col.cnpj, col.ie, col.senha].filter(c => c).forEach(c => cad.getRange(linhaCad, c).setNumberFormat('@'));
+    cad.getRange(linhaCad, 1, 1, col.total).setValues([nova]);
+    cad.getRange(linhaCad, 1, 1, col.total)
        .setFontFamily('Arial').setFontSize(10).setVerticalAlignment('middle')
        .setHorizontalAlignment('center')
        .setBorder(true, true, true, true, true, true, '#b7b7b7', SpreadsheetApp.BorderStyle.SOLID);
     cad.getRange(linhaCad, 1).setFontWeight('bold').setHorizontalAlignment('left');
-    cad.getRange(linhaCad, 2).setNumberFormat('@');   // CNPJ como texto
-    cad.getRange(linhaCad, 8).setNumberFormat('@');   // IE como texto
-    cad.getRange(linhaCad, 10).setNumberFormat('@');  // SENHA como texto
 
-    if (!adicionarNoComparativo(l.nome)) semComparativo++;
     cadastradas++;
   });
 
@@ -2346,9 +2059,7 @@ function executarImportacao() {
   let msg = '✔ Importação concluída!\n\n' +
     '• Cadastradas: ' + cadastradas + '\n' +
     '• Já existiam (puladas): ' + duplicadas;
-  if (semComparativo > 0)
-    msg += '\n• ⚠ ' + semComparativo + ' não entraram no COMPARATIVO (confira as linhas EMPRESA/TOTAL GERAL).';
-  msg += '\n\nPara colocá-las num mês, use "Abrir novo mês" — ele puxa todas as ativas.';
+  msg +='\n\nPara colocá-las num mês, use "Abrir novo mês" — ele puxa todas as ativas.';
   return { ok: true, msg: msg };
 }
 
@@ -2362,7 +2073,7 @@ function dialogoImportar() {
 function htmlImportar() {
   return '<!DOCTYPE html><html><head><base target="_top">' + estiloDialogo() + '</head><body>' +
   '<div class="sub">Cole sua lista na aba <b>IMPORTAR</b> (já aberta ao lado), a partir da linha 2 — colunas: EMPRESA · CNPJ · REGIME · PERFIL · IE · IM. Depois clique em Conferir.</div>' +
-  '<div class="aviso">Padrões: Ativa = Sim · Folha/SPED = Sim (MEI = Não) · senha em branco · regime normalizado. Empresas que já existem são puladas.</div>' +
+  '<div class="aviso">Padrões: Ativa = Sim · Folha/SPED = Sim (MEI = Não) · EFD Contrib. = Sim só no Lucro Presumido · senha em branco · regime normalizado. Empresas que já existem são puladas.</div>' +
   '<div class="botoes">' +
   '  <button class="pri" id="btnVer" onclick="conferir()">Conferir</button>' +
   '</div>' +
@@ -2396,4 +2107,507 @@ function htmlImportar() {
   '  }).withFailureHandler(function(e){ document.getElementById("btnImp").disabled=false; msg("Erro: "+e.message,"erro"); }).executarImportacao();' +
   '}' +
   '</script></body></html>';
+}
+
+// ============================================================
+//  13. FICHA DA EMPRESA  (o ano inteiro de uma empresa numa janela)
+// ============================================================
+//  Junta numa tela só o que fica espalhado em 4 abas + CADASTRO + NOTAS:
+//  dados do cadastro, o status de cada etapa mês a mês, o faturamento e
+//  as anotações da empresa. Só lê — não altera nada na planilha.
+//  Se o cursor estiver numa linha de empresa ao abrir, ela já vem escolhida.
+// ============================================================
+
+// status -> [fundo, texto, rótulo curto]. Mesmas cores da formatação
+// condicional das abas de etapa, para a ficha "bater" com a planilha.
+const FICHA_STATUS = {
+  'Concluído':     ['#C6EFCE', '#006100', '✔'],
+  'Importada':     ['#C6EFCE', '#006100', 'Imp.'],
+  'Retificada':    ['#BDD7EE', '#1F3864', 'Retif.'],
+  'Baixada':       ['#FFF2CC', '#7F6000', 'Baix.'],
+  'Agendada':      ['#FFF2CC', '#7F6000', 'Agend.'],
+  'Pendente':      ['#FFEB9C', '#9C6500', 'Pend.'],
+  'Sem movimento': ['#E7E6E6', '#595959', 'S/M'],
+  'Não se aplica': ['#F2F2F2', '#808080', 'N/A'],
+  'Erro':          ['#FFC7CE', '#9C0006', 'Erro'],
+};
+
+function dialogoFicha() {
+  const html = HtmlService.createHtmlOutput(htmlFicha(empresaDaSelecao()))
+                          .setWidth(940).setHeight(680);
+  SpreadsheetApp.getUi().showModalDialog(html, 'Ficha da empresa');
+}
+
+/** Empresa da linha onde está o cursor (abas de etapa ou CADASTRO), para
+ *  a ficha já abrir nela. '' se não der para saber. */
+function empresaDaSelecao() {
+  try {
+    const aba = planilha().getActiveSheet();
+    const nomeAba = aba.getName();
+    const col = nomeAba === 'CADASTRO' ? 1 : ABAS_ETAPA[nomeAba] ? 2 : 0;
+    const linha = aba.getActiveCell().getRow();
+    if (!col || linha < LINHA_INICIAL) return '';
+    const emp = acharEmpresa(aba.getRange(linha, col).getValue());
+    return emp ? String(emp.empresa) : '';
+  } catch (e) { return ''; }
+}
+
+/** Célula -> valor que a janela mostra. google.script.run não transporta
+ *  Date, então data vira texto aqui. */
+function celulaFicha(v, tipo) {
+  if (tipo === 'moeda') return typeof v === 'number' ? v : '';
+  if (v instanceof Date) return ('0' + v.getDate()).slice(-2) + '/' + ('0' + (v.getMonth() + 1)).slice(-2);
+  return v === null || v === undefined ? '' : String(v).trim();
+}
+
+/** Tudo o que a ficha mostra de uma empresa. Lê cada aba uma vez só.
+ *  Nas grades: null = a empresa não tem linha naquele mês (mês não aberto
+ *  ou ela não entra na etapa); '' = a linha existe mas está em branco. */
+function fichaEmpresa(nome) {
+  const faltando = abasFaltando(abasNecessarias(['CADASTRO']));
+  if (faltando.length > 0) return { ok: false, msg: msgAbasFaltando(faltando) };
+
+  const emp = acharEmpresa(nome);
+  if (!emp) return { ok: false, msg: 'Não achei "' + nome + '" no CADASTRO.' };
+  const alvo = String(emp.empresa).trim().toUpperCase();
+  const txt = v => (v === null || v === undefined) ? '' : String(v).trim();
+
+  // linha do CADASTRO (colunas pelo cabeçalho) — a SENHA fica de fora de propósito
+  const col = colunasCadastro();
+  const cad = planilha().getSheetByName('CADASTRO').getRange(emp.linha, 1, 1, col.total).getValues()[0];
+  const doCad = c => c ? txt(cad[c - 1]) : '';
+
+  const abertos = MESES.map(() => false);
+  const etapas = [];
+  let faturamento = MESES.map(() => null);
+  let emAberto = 0;
+
+  for (const nomeAba in ABAS_ETAPA) {
+    const cfg = ABAS_ETAPA[nomeAba];
+    const aba = planilha().getSheetByName(nomeAba);
+    const cab = aba.getRange(2, 1, 1, cfg.ultimaCol).getValues()[0];
+    const fim = ultimaLinha(aba);
+    const dados = fim < LINHA_INICIAL ? []
+      : aba.getRange(LINHA_INICIAL, 1, fim - LINHA_INICIAL + 1, cfg.ultimaCol).getValues();
+
+    const porMes = MESES.map(() => null);          // linha da empresa em cada mês
+    dados.forEach(l => {
+      const m = MESES.indexOf(String(l[0]).trim().toUpperCase());
+      if (m === -1) return;
+      abertos[m] = true;
+      if (!porMes[m] && String(l[1]).trim().toUpperCase() === alvo) porMes[m] = l;
+    });
+
+    const colunas = [];
+    for (let c = 5; c <= cfg.ultimaCol; c++) {       // da coluna E em diante
+      const tipo = (cfg.colsMoeda || []).indexOf(c) !== -1 ? 'moeda'
+                 : c === cfg.colData ? 'data' : 'status';
+      colunas.push({
+        nome: txt(cab[c - 1]),
+        tipo: tipo,
+        principal: c === cfg.colFeito,
+        valores: porMes.map(l => l ? celulaFicha(l[c - 1], tipo) : null),
+      });
+    }
+
+    // mesma regra do e-mail de pendências: Pendente, Erro ou em branco
+    porMes.forEach(l => {
+      if (!l) return;
+      const st = String(l[cfg.colFeito - 1]).trim();
+      if (st === 'Pendente' || st === 'Erro' || st === '') emAberto++;
+    });
+    if (cfg.colTotal) faturamento = porMes.map(l => l ? celulaFicha(l[cfg.colTotal - 1], 'moeda') : null);
+
+    etapas.push({ nome: nomeAba, entra: entraNaEtapa(emp, cfg.flag), colunas: colunas });
+  }
+
+  const lancados = faturamento.filter(v => typeof v === 'number');
+  const totalAno = lancados.reduce((s, v) => s + v, 0);
+
+  // notas: só lê se a aba existir (listarNotas criaria a aba NOTAS)
+  let notas = { pendentes: [], avisos: [], concluidas: [] };
+  if (planilha().getSheetByName(NOTAS_ABA)) {
+    const todas = listarNotas();
+    const daEmpresa = n => n.empresa.toUpperCase() === alvo;
+    notas = { pendentes:  todas.pendentes.filter(daEmpresa),
+              avisos:     todas.avisos.filter(daEmpresa),
+              concluidas: todas.concluidas.filter(daEmpresa) };
+  }
+
+  return {
+    ok: true,
+    empresa: String(emp.empresa), ativa: emp.ativa, folha: emp.folha, sped: emp.sped,
+    contrib: emp.contrib, temContrib: col.contrib > 0,
+    cnpj: doCad(col.cnpj), regime: doCad(col.regime), perfil: doCad(col.perfil),
+    ie: doCad(col.ie), im: doCad(col.im),
+    meses: MESES, abertos: abertos, etapas: etapas,
+    faturamento: faturamento, totalAno: totalAno, mesesLancados: lancados.length,
+    media: lancados.length ? totalAno / lancados.length : 0,
+    emAberto: emAberto, notas: notas,
+  };
+}
+
+function htmlFicha(escolhida) {
+  const json = v => JSON.stringify(v).replace(/</g, '\\u003c');
+  return `<!DOCTYPE html><html><head><base target="_top"><meta charset="utf-8">${estiloDialogo()}
+<style>
+body { padding: 14px 18px; }
+.topo { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
+.topo select { width: 360px; }
+.topo .dica { color: #808080; font-size: 11px; }
+.cab { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.cab .nome { font-size: 17px; font-weight: bold; color: ${COR_NAVY}; }
+.tag { font-size: 10.5px; font-weight: bold; padding: 3px 8px; border-radius: 10px; background: #EEF2FA; color: ${COR_AZUL}; }
+.tag.ok { background: #C6EFCE; color: #006100; }
+.tag.off { background: #E7E6E6; color: #595959; }
+.dados { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12px; color: #595959; margin: 6px 0 12px; }
+.dados b { color: ${COR_NAVY}; margin-right: 3px; }
+.kpis { display: flex; gap: 10px; margin-bottom: 14px; }
+.kpi { flex: 1; background: #F7F9FC; border: 1px solid #E3E8F2; border-radius: 8px; padding: 9px 12px; }
+.kpi .r { font-size: 11px; color: #595959; }
+.kpi .v { font-size: 17px; font-weight: bold; color: ${COR_NAVY}; margin: 2px 0; font-variant-numeric: tabular-nums; }
+.kpi .s { font-size: 10.5px; color: #808080; }
+.kpi.ruim { background: #FFF1F2; border-color: #F4B6BD; } .kpi.ruim .v { color: #9C0006; }
+.kpi.bom .v { color: #006100; }
+.kpi.atencao .v { color: #9C6500; }
+h4 { margin: 14px 0 4px; color: ${COR_NAVY}; font-size: 13px; }
+.dicaGrade { font-size: 11px; color: #808080; margin-bottom: 6px; }
+table.grade { width: 100%; border-collapse: collapse; table-layout: fixed; font-size: 11.5px; }
+.grade th { background: ${COR_NAVY}; color: #fff; padding: 6px 2px; font-size: 10.5px; }
+.grade th.rot { text-align: left; padding-left: 8px; width: 196px; }
+.grade th.fechado { background: #8A97A8; }
+.grade td { text-align: center; padding: 4px 2px; border-bottom: 1px solid #EEF1F7; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.grade td.rot { text-align: left; padding-left: 8px; }
+.grade tr.grupo td { border-top: 1px solid #D9E1F2; }
+.grade tr.grupo td.rot { font-weight: bold; color: ${COR_NAVY}; cursor: pointer; }
+.grade tr.grupo:hover td { background: #FBFCFE; }
+.grade .seta { display: inline-block; width: 12px; color: ${COR_AZUL}; }
+.grade .col { font-weight: normal; color: #808080; font-size: 10.5px; margin-left: 5px; }
+.grade tr.sub td { font-size: 11px; background: #FAFBFD; }
+.grade tr.sub td.rot { padding-left: 26px; color: #595959; }
+.grade tr.fat td { border-top: 2px solid #C9D2E3; font-weight: bold; color: ${COR_NAVY}; }
+.grade td.naoentra { color: #A0A0A0; font-style: italic; text-align: left; padding-left: 8px; }
+.grade tr.off td.rot { color: #A0A0A0; }
+.st { display: inline-block; min-width: 38px; padding: 2px 4px; border-radius: 4px; font-size: 10.5px; font-weight: bold; background: #EEF1F7; color: #3c4757; }
+.nada { color: #D0D0D0; }
+.branco { color: #A0A0A0; }
+.num { font-variant-numeric: tabular-nums; }
+.legenda { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 10.5px; color: #595959; margin-top: 8px; }
+.legenda .st { min-width: 0; margin-right: 3px; }
+.nota { background: #fff; border: 1px solid #E4E9F0; border-left: 4px solid #ccc; border-radius: 8px; padding: 8px 11px; margin-bottom: 7px; }
+.nota .top { display: flex; justify-content: space-between; font-size: 10.5px; margin-bottom: 3px; }
+.nota .prio { font-weight: bold; text-transform: uppercase; letter-spacing: .3px; }
+.nota .date { color: #8A97A8; }
+.nota .desc { font-size: 12.5px; white-space: pre-wrap; word-break: break-word; }
+.nota.done .desc { text-decoration: line-through; color: #9AA7B8; }
+.vermais { font-size: 11.5px; color: ${COR_AZUL}; cursor: pointer; margin: 4px 0 8px; }
+.vazio { color: #9AA7B8; font-size: 12px; padding: 6px 0; }
+.inicio { text-align: center; color: #9AA7B8; font-size: 13px; padding: 90px 0; }
+</style></head><body>
+<div class="topo">
+  <select id="emp"></select>
+  <span class="dica">Dica: com o cursor na linha de uma empresa, a ficha já abre nela.</span>
+</div>
+<div id="conteudo"></div>
+<div class="botoes"><button class="pri" onclick="google.script.host.close()">Fechar</button></div>
+<script>
+var EMPRESAS = ${json(listarEmpresas())};
+var INICIAL = ${json(escolhida)};
+var STATUS = ${json(FICHA_STATUS)};
+var MES_CURTO = ['JAN','FEV','MAR','ABR','MAI','JUN','JUL','AGO','SET','OUT','NOV','DEZ'];
+var PRIO = { 'Alta':{c:'#e0362c',t:'#c0281f'}, 'Média':{c:'#f0a400',t:'#9a6b00'}, 'Baixa':{c:'#4a89dc',t:'#2f6cb5'} };
+var AVISO = { c:'#8250df', t:'#6f42c1' }, FEITA = { c:'#34a853', t:'#1e7e34' };
+var pedido = 0;   // descarta resposta atrasada se você trocar de empresa rápido
+
+function esc(s){ return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;'); }
+function reais(v){ return 'R$ ' + Number(v).toLocaleString('pt-BR',{minimumFractionDigits:2,maximumFractionDigits:2}); }
+function curto(v){
+  var a = Math.abs(v);
+  if (a >= 1e6) return (v/1e6).toLocaleString('pt-BR',{maximumFractionDigits:1}) + ' mi';
+  if (a >= 1e3) return (v/1e3).toLocaleString('pt-BR',{maximumFractionDigits:1}) + ' mil';
+  return v.toLocaleString('pt-BR',{maximumFractionDigits:0});
+}
+
+function celula(v, tipo){
+  if (v === null) return '<td class="nada" title="sem linha neste mês">—</td>';
+  if (v === '') return '<td class="branco" title="em branco">·</td>';
+  if (tipo === 'moeda') return '<td class="num" title="' + reais(v) + '">' + curto(v) + '</td>';
+  if (tipo === 'data') return '<td>' + esc(v) + '</td>';
+  var s = STATUS[v];
+  if (!s) return '<td title="' + esc(v) + '"><span class="st">' + esc(v) + '</span></td>';
+  return '<td title="' + esc(v) + '"><span class="st" style="background:' + s[0] + ';color:' + s[1] + '">' + s[2] + '</span></td>';
+}
+
+function cabecalho(f){
+  var tags = '<span class="tag">' + esc(f.regime || 'sem regime') + '</span>' +
+    (f.perfil ? '<span class="tag">Perfil ' + esc(f.perfil) + '</span>' : '') +
+    (f.ativa ? '<span class="tag ok">ATIVA</span>' : '<span class="tag off">INATIVA</span>');
+  var dados = [['CNPJ', f.cnpj], ['IE', f.ie], ['IM', f.im], ['Folha', f.folha ? 'Sim' : 'Não'], ['SPED', f.sped ? 'Sim' : 'Não']];
+  if (f.temContrib) dados.push(['EFD Contrib.', f.contrib === true ? 'Sim' : f.contrib === false ? 'Não' : '']);
+  dados = dados.map(function(d){ return '<span><b>' + d[0] + '</b>' + esc(d[1] || '—') + '</span>'; }).join('');
+  return '<div class="cab"><span class="nome">' + esc(f.empresa) + '</span>' + tags + '</div><div class="dados">' + dados + '</div>';
+}
+
+function kpi(rot, val, cls, sub){
+  return '<div class="kpi ' + cls + '"><div class="r">' + rot + '</div><div class="v">' + val + '</div><div class="s">' + sub + '</div></div>';
+}
+function kpis(f){
+  var np = f.notas.pendentes.length;
+  return '<div class="kpis">' +
+    kpi('Em aberto no ano', f.emAberto, f.emAberto ? 'ruim' : 'bom', 'Pendente, Erro ou em branco') +
+    kpi('Faturamento no ano', reais(f.totalAno), '', f.mesesLancados + ' mês(es) lançado(s)') +
+    kpi('Média por mês', reais(f.media), '', 'dos meses lançados') +
+    kpi('Notas pendentes', np, np ? 'atencao' : '', f.notas.avisos.length + ' aviso(s)') +
+    '</div>';
+}
+
+function grade(f){
+  var h = '<table class="grade"><thead><tr><th class="rot">Etapa</th>';
+  f.meses.forEach(function(m, i){
+    h += '<th class="' + (f.abertos[i] ? '' : 'fechado') + '" title="' + m + (f.abertos[i] ? '' : ' — ainda não aberto') + '">' + MES_CURTO[i] + '</th>';
+  });
+  h += '</tr></thead><tbody>';
+  f.etapas.forEach(function(e, k){
+    var principal = e.colunas.filter(function(c){ return c.principal; })[0];
+    var outras = e.colunas.filter(function(c){ return !c.principal; });
+    var temLinha = principal.valores.some(function(v){ return v !== null; });
+    if (!e.entra && !temLinha) {
+      h += '<tr class="grupo off"><td class="rot">' + esc(e.nome) + '</td><td colspan="12" class="naoentra">não entra nesta etapa (pelo cadastro)</td></tr>';
+      return;
+    }
+    h += '<tr class="grupo" onclick="abre(' + k + ')" title="Clique para ver as colunas desta etapa"><td class="rot"><span class="seta" id="seta' + k + '">▸</span>' +
+         esc(e.nome) + '<span class="col">' + esc(principal.nome.toLowerCase()) + '</span></td>';
+    principal.valores.forEach(function(v){ h += celula(v, principal.tipo); });
+    h += '</tr>';
+    outras.forEach(function(c){
+      h += '<tr class="sub s' + k + '" style="display:none"><td class="rot" title="' + esc(c.nome) + '">' + esc(c.nome) + '</td>';
+      c.valores.forEach(function(v){ h += celula(v, c.tipo); });
+      h += '</tr>';
+    });
+  });
+  h += '<tr class="fat"><td class="rot">Faturamento (total)</td>';
+  f.faturamento.forEach(function(v){ h += celula(v, 'moeda'); });
+  return h + '</tr></tbody></table>';
+}
+
+function legenda(){
+  var h = '<div class="legenda">';
+  for (var nome in STATUS) {
+    var s = STATUS[nome];
+    h += '<span><span class="st" style="background:' + s[0] + ';color:' + s[1] + '">' + s[2] + '</span>' + esc(nome) + '</span>';
+  }
+  return h + '<span><b class="nada">—</b> sem linha no mês</span><span><b class="branco">·</b> em branco</span></div>';
+}
+
+function cartao(n, cor, rot, feita){
+  return '<div class="nota' + (feita ? ' done' : '') + '" style="border-left-color:' + cor.c + '">' +
+    '<div class="top"><span class="prio" style="color:' + cor.t + '">' + esc(rot) + '</span><span class="date">' + esc(n.data) + '</span></div>' +
+    '<div class="desc">' + esc(n.descricao) + '</div></div>';
+}
+function notas(f){
+  var n = f.notas;
+  var h = '<h4>Notas da empresa</h4>';
+  var itens = n.pendentes.map(function(x){ return cartao(x, PRIO[x.prioridade] || PRIO['Média'], x.prioridade); })
+    .concat(n.avisos.map(function(x){ return cartao(x, AVISO, 'Aviso'); }));
+  if (!itens.length && !n.concluidas.length)
+    return h + '<div class="vazio">Nenhuma nota ligada a esta empresa. No Bloco de notas, escolha a empresa ao criar a nota.</div>';
+  h += itens.length ? itens.join('') : '<div class="vazio">Nenhuma nota pendente.</div>';
+  if (n.concluidas.length) {
+    h += '<div class="vermais" onclick="var c=document.getElementById(\\'conc\\');c.style.display=c.style.display===\\'none\\'?\\'block\\':\\'none\\'">ver / esconder ' +
+         n.concluidas.length + ' concluída(s)</div><div id="conc" style="display:none">' +
+         n.concluidas.map(function(x){ return cartao(x, FEITA, 'Concluída', true); }).join('') + '</div>';
+  }
+  return h;
+}
+
+function abre(k){
+  var linhas = document.querySelectorAll('.s' + k);
+  if (!linhas.length) return;
+  var mostrar = linhas[0].style.display === 'none';
+  for (var i = 0; i < linhas.length; i++) linhas[i].style.display = mostrar ? '' : 'none';
+  document.getElementById('seta' + k).textContent = mostrar ? '▾' : '▸';
+}
+
+function carregar(nome){
+  var meu = ++pedido;
+  var alvo = document.getElementById('conteudo');
+  if (!nome) { alvo.innerHTML = '<div class="inicio">Escolha uma empresa na lista acima.</div>'; return; }
+  alvo.innerHTML = '<div id="status" class="load">Montando a ficha de ' + esc(nome) + '...</div>';
+  google.script.run.withSuccessHandler(function(f){
+    if (meu !== pedido) return;
+    if (!f.ok) { alvo.innerHTML = '<div class="alerta">' + esc(f.msg) + '</div>'; return; }
+    alvo.innerHTML = cabecalho(f) + kpis(f) +
+      '<h4>Status por mês</h4><div class="dicaGrade">Cada linha mostra a coluna final da etapa. Clique na etapa para ver as outras colunas.</div>' +
+      grade(f) + legenda() + notas(f);
+  }).withFailureHandler(function(e){
+    if (meu === pedido) alvo.innerHTML = '<div class="alerta">Erro: ' + esc(e.message) + '</div>';
+  }).fichaEmpresa(nome);
+}
+
+var sel = document.getElementById('emp');
+var o0 = document.createElement('option'); o0.value = ''; o0.text = '— escolha a empresa —'; sel.add(o0);
+EMPRESAS.forEach(function(e){
+  var o = document.createElement('option'); o.value = e.nome; o.text = e.nome + (e.ativa ? '' : '  (inativa)'); sel.add(o);
+});
+sel.addEventListener('change', function(){ carregar(sel.value); });
+sel.value = INICIAL;
+carregar(INICIAL);
+</script>
+</body></html>`;
+}
+
+// ============================================================
+//  14. MANUTENÇÃO — limpezas de uma vez só (rodar pelo editor)
+// ============================================================
+//  Funções que ajustam a planilha quando o script muda (tirar o que saiu,
+//  criar coluna nova). Rode cada uma UMA VEZ pelo editor do Apps Script
+//  (escolha o nome dela ao lado do botão "Executar"). Depois de rodadas,
+//  podem ficar aqui sem problema.
+//
+//  removerFaturamentoDoComparativo: a Ficha da empresa substituiu a parte
+//  de faturamento do COMPARATIVO. Ela apaga o bloco inteiro de faturamento —
+//  título, linhas de empresa e TOTAL GERAL — e deixa só a tabela de
+//  PENDÊNCIAS. Nada digitado se perde: o bloco era só fórmula somando a aba
+//  3. FATURAMENTO. Funciona com a tabela original e também se as linhas de
+//  empresa já tiverem sido tiradas antes. Rodar de novo não faz nada.
+// ============================================================
+
+function removerFaturamentoDoComparativo() {
+  const aba = planilha().getSheetByName('COMPARATIVO');
+  if (!aba) throw new Error('Não achei a aba COMPARATIVO. Nada foi apagado.');
+
+  const ultCol = aba.getLastColumn();
+  const colB = aba.getRange(1, 2, aba.getLastRow(), 1).getValues()
+                  .map(l => String(l[0]).trim().toUpperCase());
+  const linhaTotal = colB.indexOf('TOTAL GERAL') + 1;
+  const linhaCab   = colB.indexOf('EMPRESA') + 1;
+  if (!linhaTotal) {
+    if (linhaCab) throw new Error('Achei o cabeçalho "EMPRESA" mas não a linha "TOTAL GERAL" — layout inesperado. Nada foi apagado.');
+    console.log('Nada a fazer: o faturamento já foi removido do COMPARATIVO.');
+    return;
+  }
+
+  // do título do bloco ("FATURAMENTO POR EMPRESA..." ou "FATURAMENTO TOTAL...")
+  // até a linha antes das PENDÊNCIAS — leva junto o espaço em branco do meio
+  const linhaTitulo = colB.findIndex((t, i) => i + 1 < linhaTotal && t.indexOf('FATURAMENTO') === 0) + 1;
+  const linhaPend   = colB.findIndex((t, i) => i + 1 > linhaTotal && t.indexOf('PENDÊNCIAS') === 0) + 1;
+  const ini = linhaTitulo || linhaCab || linhaTotal;
+  const fim = linhaPend ? linhaPend - 1 : linhaTotal;
+
+  // trava: nada digitado à mão pode ir junto. Liberados só o título, o
+  // cabeçalho dos meses e a coluna B (nomes) até o TOTAL GERAL; o resto
+  // tem que ser fórmula ou vazio.
+  const faixa = aba.getRange(ini, 1, fim - ini + 1, ultCol);
+  const formulas = faixa.getFormulas(), valores = faixa.getValues();
+  for (let i = 0; i < valores.length; i++) {
+    const r = ini + i;
+    if (r === linhaTitulo) continue;
+    if (MESES.every((m, j) => String(valores[i][2 + j]).trim().toUpperCase() === m)) continue;   // cabeçalho
+    for (let c = 0; c < ultCol; c++) {
+      if (c === 1 && r <= linhaTotal) continue;
+      if (!formulas[i][c] && valores[i][c] !== '' && valores[i][c] !== null) {
+        throw new Error('A célula ' + letraColuna(c + 1) + r + ' do COMPARATIVO tem um valor digitado à mão (' +
+                        valores[i][c] + '). Por segurança nada foi apagado — confira essa célula.');
+      }
+    }
+  }
+
+  aba.setFrozenRows(0);                  // o congelamento era do cabeçalho do faturamento
+  aba.deleteRows(ini, fim - ini + 1);
+
+  console.log('Pronto: ' + (fim - ini + 1) + ' linha(s) removidas — o faturamento saiu do COMPARATIVO. ' +
+              'A tabela de PENDÊNCIAS ficou.');
+}
+
+/** Tira o calendário de vencimentos do PAINEL (o recurso saiu do script).
+ *  Rode UMA VEZ pelo editor, como a função acima. Limpa só as células do
+ *  calendário (H7:N14) e da legenda (H16:N16) — o resto do PAINEL, como o
+ *  ícone e o texto do Bloco de notas logo abaixo, fica intacto. A aba oculta
+ *  VENCIMENTOS não é apagada (tem os prazos que você digitou).
+ *  Rodar de novo não faz nada. */
+function removerCalendario() {
+  const painel = planilha().getSheetByName('PAINEL');
+  if (!painel) throw new Error('Não achei a aba PAINEL. Nada foi apagado.');
+
+  // assinatura do calendário: SEG..DOM em H8:N8. Sem ela, não mexe em nada.
+  const cab = painel.getRange('H8:N8').getValues()[0].map(v => String(v).trim().toUpperCase());
+  if (cab.join(',') !== 'SEG,TER,QUA,QUI,SEX,SÁB,DOM') {
+    console.log('Nada a fazer: não achei o calendário no PAINEL.');
+    return;
+  }
+
+  painel.getRange('H7:N14').breakApart().clearContent().clearFormat();   // título, dias e 6 semanas
+  painel.getRange('H16:N16').breakApart().clearContent().clearFormat();  // legenda
+  PropertiesService.getDocumentProperties().deleteProperty('CALENDARIO');
+
+  console.log('Pronto: o calendário saiu do PAINEL.');
+}
+
+/** Cria a coluna "FAZ EFD CONTRIB.?" no CADASTRO, logo depois de "FAZ SPED?",
+ *  com a mesma lista Sim/Não e as mesmas cores, e já preenche pelo regime:
+ *  Lucro Presumido = Sim; Simples, Simples Híbrido e MEI = Não (o Simples é
+ *  dispensado da EFD Contribuições). Confira e ajuste o que precisar.
+ *  Rode UMA VEZ pelo editor. Rodar de novo não faz nada. */
+function adicionarColunaEfdContrib() {
+  const cad = planilha().getSheetByName('CADASTRO');
+  if (!cad) throw new Error('Não achei a aba CADASTRO. Nada foi alterado.');
+  const antes = colunasCadastro();
+  if (antes.contrib) {
+    console.log('Nada a fazer: a coluna "' + CAD_CABECALHOS.contrib + '" já existe (coluna ' +
+                letraColuna(antes.contrib) + ').');
+    return;
+  }
+
+  const ref = antes.sped, nova = antes.sped + 1;
+  cad.insertColumnAfter(ref);
+  const linhas = cad.getMaxRows() - 1;                     // da linha 2 (cabeçalho) até o fim
+  const origem = cad.getRange(2, ref, linhas, 1), destino = cad.getRange(2, nova, linhas, 1);
+  origem.copyTo(destino, SpreadsheetApp.CopyPasteType.PASTE_FORMAT, false);
+  origem.copyTo(destino, SpreadsheetApp.CopyPasteType.PASTE_DATA_VALIDATION, false);
+  cad.setColumnWidth(nova, cad.getColumnWidth(ref));
+  cad.getRange(2, nova).setValue(CAD_CABECALHOS.contrib);
+
+  // cores Sim/Não: se a cópia de formato não trouxe, copia as regras da FAZ SPED?
+  const regras = cad.getConditionalFormatRules();
+  const cobre = c => regras.some(r => r.getRanges().some(g => g.getColumn() <= c && g.getLastColumn() >= c));
+  if (!cobre(nova)) {
+    const faixa = cad.getRange(LINHA_INICIAL, nova, cad.getMaxRows() - LINHA_INICIAL + 1, 1);
+    const copias = regras
+      .filter(r => r.getRanges().some(g => g.getColumn() === ref && g.getLastColumn() === ref))
+      .map(r => r.copy().setRanges([faixa]).build());
+    cad.setConditionalFormatRules(regras.concat(copias));
+  }
+
+  // preenche pelo regime e junta a lista para conferir
+  const fim = ultimaLinhaCol(cad, 'A');
+  let sim = 0, nao = 0;
+  const conferir = [];
+  if (fim >= LINHA_INICIAL) {
+    const col = colunasCadastro();
+    const dados = cad.getRange(LINHA_INICIAL, 1, fim - LINHA_INICIAL + 1, col.total).getValues();
+    const vals = dados.map(l => {
+      const v = l[0] === '' ? '' : contribPadrao(l[2]);
+      if (v === 'Sim') sim++; else if (v === 'Não') nao++;
+      // Lucro Presumido sem IE costuma fazer SÓ a EFD Contribuições
+      const ie = col.ie ? String(l[col.ie - 1]).trim().toUpperCase() : '';
+      if (v === 'Sim' && (ie === '' || ie === 'S/IE') &&
+          String(l[col.sped - 1]).trim().toUpperCase() === 'SIM') conferir.push(l[0]);
+      return [v];
+    });
+    cad.getRange(LINHA_INICIAL, nova, vals.length, 1).setValues(vals);
+  }
+
+  console.log('Pronto: coluna "' + CAD_CABECALHOS.contrib + '" criada na coluna ' + letraColuna(nova) +
+              ' do CADASTRO. Preenchida pelo regime: ' + sim + ' Sim, ' + nao + ' Não.');
+  if (conferir.length) {
+    console.log('Confira: estas são Lucro Presumido sem IE — se fazem SÓ a EFD Contribuições, ' +
+                'mude FAZ SPED? para Não (aí a EFD ICMS/IPI já vem "Não se aplica"): ' + conferir.join(', '));
+  }
+}
+
+/** 1 -> A, 27 -> AA (só para as mensagens). */
+function letraColuna(n) {
+  let s = '';
+  for (; n > 0; n = Math.floor((n - 1) / 26)) s = String.fromCharCode(65 + (n - 1) % 26) + s;
+  return s;
 }

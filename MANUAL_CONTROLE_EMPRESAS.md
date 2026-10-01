@@ -14,21 +14,20 @@ A ideia central: **o que é fixo fica separado do que muda todo mês.**
 
 | Aba | Para que serve |
 |---|---|
-| **PAINEL** | Tela de acompanhamento. Escolha o mês e veja o que falta em cada etapa. À direita fica o **calendário de vencimentos** do mês. |
+| **PAINEL** | Tela de acompanhamento. Escolha o mês e veja o que falta em cada etapa. |
 | **CADASTRO** | Dados fixos da empresa (CNPJ, regime, senha) e em quais etapas ela entra. Preenchido uma vez. |
 | **1. FOLHA** | Folhas e encargos. Só empresas com FAZ FOLHA = Sim. |
-| **2. SPED** | SPED ICMS/IPI/Contribuições. Só empresas com FAZ SPED = Sim. |
+| **2. SPED** | SPED ICMS/IPI/Contribuições. Empresas com FAZ SPED = Sim ou FAZ EFD CONTRIB.? = Sim. |
 | **3. FATURAMENTO** | Faturamento do mês. Todas as empresas ativas. |
 | **4. CONSULTAS** | Consultas fiscais. Todas as empresas ativas. |
-| **COMPARATIVO** | Faturamento de cada empresa mês a mês + pendências por mês. |
-| **VENCIMENTOS** | Prazos das obrigações que alimentam o calendário do PAINEL, e a lista de categorias/cores. Você lança à mão. (Seção 8) |
+| **COMPARATIVO** | Pendências por mês, por etapa. O faturamento de cada empresa fica na **Ficha da empresa**. |
 | **COMO USAR** | Resumo rápido dentro da própria planilha. |
 | **LISTAS** | Bastidores (as listas suspensas). Fica oculta — não mexa. |
-| **NOTAS** | Guarda as anotações do bloco de notas. Fica oculta — o script cuida dela. (Seção 9) |
+| **NOTAS** | Guarda as anotações do bloco de notas. Fica oculta — o script cuida dela. (Seção 8) |
 
 Nas abas de etapa, a **coluna MÊS** é o que guarda o histórico: os meses ficam empilhados, nada é apagado.
 
-**A planilha é de um ano.** Em janeiro, use *Virar o ano* (seção 10) para criar o arquivo do ano seguinte.
+**A planilha é de um ano.** Em janeiro, use *Virar o ano* (seção 9) para criar o arquivo do ano seguinte.
 
 ---
 
@@ -64,11 +63,12 @@ Pronto: aparece o menu **🧮 Modo Contador** no topo.
 | Regime | Simples Nacional, Simples Híbrido, Lucro Presumido ou MEI |
 | **Entra a partir de** | Em qual mês ela começa. Veja abaixo. |
 | Faz a FOLHA? | Define se ela aparece na aba 1. FOLHA |
-| Faz o SPED? | Define se ela aparece na aba 2. SPED |
+| Faz o SPED? | SPED fiscal (EFD ICMS/IPI). Com Sim, ela aparece na aba 2. SPED |
+| Faz EFD Contrib.? | EFD Contribuições. Já vem marcado pelo regime (Lucro Presumido = Sim), dá para trocar. Com Sim, ela também aparece na aba 2. SPED |
 
 3. Clique em **Cadastrar**. O formulário **continua aberto e já limpo** para a próxima empresa — dá para cadastrar várias seguidas sem reabrir nada. O Enter no campo do nome também cadastra.
 
-O script grava no CADASTRO (marcando ATIVA? = Sim), insere a empresa nos meses escolhidos e no COMPARATIVO.
+O script grava no CADASTRO (marcando ATIVA? = Sim), e insere a empresa nos meses escolhidos.
 
 **Senha, perfil e inscrições** não são perguntados: preencha direto no CADASTRO depois.
 
@@ -91,7 +91,7 @@ Se nenhum mês foi aberto ainda (planilha nova), a empresa fica só no cadastro 
 
 1. **🧮 Modo Contador → Abrir novo mês** → escolha o mês na lista → **Abrir mês**.
 
-   O script monta o mês novo em todas as abas com as empresas certas (só as **ativas**, e respeitando quem faz folha e quem faz SPED), deixa os status em branco e muda o PAINEL para o mês novo. **Os meses anteriores continuam intactos.**
+   O script monta o mês novo em todas as abas com as empresas certas (só as **ativas**, e respeitando quem faz folha e quem faz SPED), deixa os status em branco — menos o "Não se aplica" automático da aba 2. SPED, veja abaixo — e muda o PAINEL para o mês novo. **Os meses anteriores continuam intactos.**
 
 2. Trabalhe nas abas na ordem: Folha → SPED → Faturamento → Consultas.
    Use o filtro da coluna MÊS para ver só o mês atual.
@@ -128,73 +128,66 @@ A coluna que sinaliza que a etapa acabou é a **CONFERÊNCIA** (no Faturamento, 
 
 ### O que pode editar na mão
 
-Tudo, **menos o nome da empresa**: CNPJ, regime, FAZ FOLHA?, FAZ SPED?, ATIVA?, perfil, inscrições, senha.
+Tudo, **menos o nome da empresa**: CNPJ, regime, FAZ FOLHA?, FAZ SPED?, FAZ EFD CONTRIB.?, ATIVA?, perfil, inscrições, senha.
+
+### FAZ SPED? e FAZ EFD CONTRIB.? — o "Não se aplica" automático
+
+Na aba 2. SPED, ao abrir um mês, a EFD que a empresa **não faz** já vem marcada como **Não se aplica**:
+
+| FAZ SPED? | FAZ EFD CONTRIB.? | Na aba 2. SPED |
+|---|---|---|
+| Sim | Sim | Entra; as duas EFDs ficam em branco para você marcar |
+| Sim | Não | Entra; **EFD CONTRIBUIÇÕES = Não se aplica** (caso do Simples Nacional) |
+| Não | Sim | Entra; **EFD ICMS/IPI = Não se aplica** (empresa que faz só a EFD Contribuições) |
+| Não | Não | Não entra na aba 2. SPED |
+| Sim | (em branco) | Entra; nada marcado — como era antes da coluna existir |
+
+Da coluna D em diante, o CADASTRO é lido pelo **cabeçalho** (linha 2) — EMPRESA, CNPJ e REGIME ficam sempre em A, B e C. Pode mudar a ordem das outras colunas, mas **não renomeie os cabeçalhos** (ex.: "ATIVA?", "FAZ SPED?"): se o script não achar um deles, ele avisa e para, em vez de ler a coluna errada.
 
 ### O que precisa ser pelo menu
 
 | Situação | O que fazer |
 |---|---|
-| **Trocar o nome da empresa** | 🧮 Modo Contador → **Renomear empresa**. Escolha a empresa na lista e digite o novo nome. Troca em tudo de uma vez (cadastro, 4 abas, comparativo). |
+| **Trocar o nome da empresa** | 🧮 Modo Contador → **Renomear empresa**. Escolha a empresa na lista e digite o novo nome. Troca em tudo de uma vez (cadastro e as 4 abas). |
 | **Empresa saiu do escritório** | 🧮 Modo Contador → **Ativar / desativar empresa**. Escolha na lista; ela para de entrar nos meses novos e o histórico fica guardado. **Não apague.** |
 | **Empresa voltou** | O mesmo menu — ele reativa. |
 | **Cadastrei errado, quero sumir com ela** | 🧮 Modo Contador → **Excluir empresa de vez**. Escolha na lista, veja quantas linhas vão embora e confirme. Não tem volta. |
-| **Abri o mês errado** | 🧮 Modo Contador → **Excluir um mês inteiro**. Veja a seção 10.1. |
-| **Conferir se algum faturamento está estranho** | 🧮 Modo Contador → **Conferir faturamentos suspeitos**. Veja a seção 11.1. |
-| **Ver / lançar prazos das obrigações** | 🧮 Modo Contador → **Mostrar / atualizar calendário**. Veja a seção 8. |
-| **Anotar lembretes e avisos** | 🧮 Modo Contador → **Bloco de notas** (ou clique no ícone 📝 no painel). Veja a seção 9. |
+| **Abri o mês errado** | 🧮 Modo Contador → **Excluir um mês inteiro**. Veja a seção 9.1. |
+| **Ver o ano inteiro de uma empresa** | 🧮 Modo Contador → **Ficha da empresa**. Veja a seção 7. |
+| **Conferir se algum faturamento está estranho** | 🧮 Modo Contador → **Conferir faturamentos suspeitos**. Veja a seção 10.1. |
+| **Anotar lembretes e avisos** | 🧮 Modo Contador → **Bloco de notas** (ou clique no ícone 📝 no painel). Veja a seção 8. |
 | **Cadastrar empresa** | 🧮 Modo Contador → **Cadastrar empresa nova**. |
 
 ### Por que o nome não pode ser editado na mão
 
-As abas de etapa buscam o CNPJ e o regime **pelo nome**, e o COMPARATIVO soma o faturamento **pelo nome**. Se você trocar só no CADASTRO, as linhas antigas ficam órfãs: o CNPJ some e o faturamento daquela empresa zera no comparativo.
+As abas de etapa buscam o CNPJ e o regime **pelo nome**, e a Ficha da empresa junta o histórico **pelo nome**. Se você trocar só no CADASTRO, as linhas antigas ficam órfãs: o CNPJ some e o histórico daquela empresa some da ficha.
 
 ### Três armadilhas
 
-- **Cadastrar empresa direto no CADASTRO, na mão, funciona pela metade**: ela entra nos meses novos, mas **não ganha a linha dela no COMPARATIVO**. Cadastre sempre pelo menu.
-- **FAZ FOLHA? e FAZ SPED? só valem para os meses seguintes.** Mudar para "Sim" hoje não faz a empresa aparecer nos meses que já estão abertos — ela entra no próximo "Abrir novo mês". Para incluir num mês já aberto, digite o mês e o nome numa linha vazia da aba (CNPJ e regime aparecem sozinhos).
+- **Cadastrar empresa direto no CADASTRO, na mão, funciona pela metade**: ela só entra a partir do próximo mês que você abrir — **não entra nos meses que já estão abertos**. Cadastre sempre pelo menu.
+- **FAZ FOLHA?, FAZ SPED? e FAZ EFD CONTRIB.? só valem para os meses seguintes.** Mudar para "Sim" hoje não faz a empresa aparecer nos meses que já estão abertos — ela entra no próximo "Abrir novo mês". Para incluir num mês já aberto, digite o mês e o nome numa linha vazia da aba (CNPJ e regime aparecem sozinhos).
 - **Campo ATIVA? em branco conta como ativa**, para ninguém sumir por descuido.
 
 ---
 
 ## 7. Acompanhar e comparar
 
-**PAINEL** — escolha o mês na célula azul (ao abrir, já vem no mês atual). Mostra, por etapa: quantas empresas entram naquele mês, quantas estão concluídas, quantas estão pendentes ou com erro, e a barra de progresso. À direita fica o **calendário de vencimentos** do mês (seção 8).
+**PAINEL** — escolha o mês na célula azul (ao abrir, já vem no mês atual). Mostra, por etapa: quantas empresas entram naquele mês, quantas estão concluídas, quantas estão pendentes ou com erro, e a barra de progresso.
 
-**COMPARATIVO** — duas tabelas:
+**COMPARATIVO** — *Pendências por mês*: quantas declarações ficaram sem concluir em cada etapa, em cada mês. **Vermelho** = tem pendência, **verde** = tudo enviado. Para ver o faturamento de uma empresa mês a mês, use a **Ficha da empresa** (abaixo).
 
-- *Faturamento por empresa*: cada empresa nas 12 colunas de mês, com total do ano. Dá para ver na hora se uma empresa faturou mais ou menos que no mês passado. A linha TOTAL GERAL puxa direto do Faturamento.
-- *Pendências por mês*: quantas declarações ficaram sem concluir em cada etapa, em cada mês. **Vermelho** = tem pendência, **verde** = tudo enviado.
+**FICHA DA EMPRESA** — 🧮 Modo Contador → **Ficha da empresa**. Mostra o ano inteiro de **uma** empresa numa janela só, sem precisar filtrar as 4 abas:
 
----
+- **Cadastro**: CNPJ, regime, perfil, IE, IM, se faz Folha/SPED/EFD Contribuições e se está ativa. A **senha não aparece** na ficha, de propósito.
+- **Quatro números**: quantas etapas estão em aberto no ano (Pendente, Erro ou em branco), faturamento do ano, média por mês e notas pendentes.
+- **Status por mês**: uma linha por etapa e uma coluna por mês, com as mesmas cores da planilha. Cada linha mostra a **coluna final** da etapa (a mesma que o PAINEL usa). **Clique no nome da etapa** para ver as outras colunas dela. Na última linha fica o faturamento total de cada mês (passe o mouse para ver o valor exato). Meses ainda não abertos aparecem com o cabeçalho cinza.
+- **Notas da empresa**: as notas do Bloco de notas ligadas a ela (pendentes e avisos; as concluídas ficam em "ver / esconder").
 
-## 8. Calendário de vencimentos
-
-No **PAINEL**, à direita (colunas H a N), fica um calendário do mês selecionado com uma **bolinha colorida** no dia de cada obrigação. Ele segue o mês do seletor e destaca o **dia de hoje**.
-
-**Para montar/atualizar:** 🧮 Modo Contador → **Mostrar / atualizar calendário**. Na primeira vez, isso cria a aba **VENCIMENTOS** e desenha o calendário. Depois ele se atualiza sozinho quando você troca o mês ou lança um prazo.
-
-### Lançar os prazos
-
-Os prazos mudam de mês para mês, então são **lançados à mão** na aba **VENCIMENTOS** (colunas A–D):
-
-| Coluna | O que é |
-|---|---|
-| MÊS | Mês do vencimento (lista suspensa) |
-| DIA | Dia do mês (1 a 31) |
-| OBRIGAÇÃO | Nome livre (ex.: "Simples", "DCTFWeb") |
-| CATEGORIA | A cor da bolinha (lista suspensa) |
-
-Um mesmo dia pode ter vários vencimentos — aparecem várias bolinhas juntas.
-
-### Categorias e cores
-
-Na mesma aba VENCIMENTOS, ao lado (colunas **F e G**), fica a lista de categorias e a bolinha (cor) de cada uma. **Você edita à vontade:** renomeia, adiciona ou troca a cor — o dropdown de CATEGORIA e a legenda do calendário se atualizam sozinhos. As cores saem de uma paleta de bolinhas de emoji (🔴 🟠 🟡 🟢 🔵 🟣 🟤 ⚫ ⚪), então dá para ter até 9 categorias com cores distintas.
-
-> O calendário é "pintado" com valores fixos, sem fórmula viva — **não pesa** na planilha.
+**Atalho:** se o cursor estiver na linha de uma empresa (nas abas de etapa ou no CADASTRO) quando você abrir a ficha, ela já abre nessa empresa. A ficha só **lê**: não altera nada na planilha.
 
 ---
 
-## 9. Bloco de notas
+## 8. Bloco de notas
 
 Um bloco de anotações que abre numa **janela flutuante**. Serve para lembretes soltos, avisos e tarefas.
 
@@ -228,9 +221,9 @@ Pronto: clicar no ícone abre o bloco. Na primeira vez, o Google pede autorizaç
 
 ---
 
-## 10. Virar o ano
+## 9. Virar o ano
 
-### 10.1 Abri o mês errado — como apagar
+### 9.1 Abri o mês errado — como apagar
 
 **🧮 Modo Contador → Excluir um mês inteiro.** Escolha o mês e clique em **Verificar**: antes de apagar nada, o script mostra quantas linhas existem em cada aba, quantos status já estão marcados e quanto de faturamento foi lançado.
 
@@ -254,7 +247,7 @@ Em janeiro: **🧮 Modo Contador → Virar o ano** → digite o ano novo (ex.: `
 O que ele faz:
 
 - Cria uma **cópia** chamada `CONTROLE EMPRESAS 2027`.
-- Na cópia, **mantém** o CADASTRO e as empresas do COMPARATIVO.
+- Na cópia, **mantém** o CADASTRO.
 - Na cópia, **zera** as abas de etapa, prontas para o ano novo.
 - **Não altera o arquivo atual**, que fica como histórico do ano que passou.
 
@@ -264,7 +257,7 @@ No fim ele mostra o link do arquivo novo. Abra ele e use *Abrir novo mês → JA
 
 ---
 
-## 11. Alerta de pendências por e-mail (opcional)
+## 10. Alerta de pendências por e-mail (opcional)
 
 Não tem botão no menu — funciona por acionador automático:
 
@@ -282,7 +275,7 @@ Você recebe um e-mail com as pendências do mês que estiver selecionado no PAI
 
 ---
 
-## 11.1 Conferir faturamentos suspeitos
+## 10.1 Conferir faturamentos suspeitos
 
 **🧮 Modo Contador → Conferir faturamentos suspeitos.** Abre uma janela que lista os valores de faturamento que fogem muito do padrão de cada empresa — provável **erro de digitação** (um zero a mais ou a menos) ou **variação real** que vale conferir.
 
@@ -311,7 +304,7 @@ E `ANOMALIA_MIN_MESES`: use `2` para começar a analisar mais cedo no ano, ou de
 
 ---
 
-## 12. Solução de problemas
+## 11. Solução de problemas
 
 | Problema | Causa e solução |
 |---|---|
@@ -325,13 +318,13 @@ E `ANOMALIA_MIN_MESES`: use `2` para começar a analisar mais cedo no ano, ou de
 
 ---
 
-## 13. Limites e manutenção
+## 12. Limites e manutenção
 
 - **Limite de 1.500 linhas por aba** (`LIMITE_LINHAS` no topo do script). Cada empresa ocupa 12 linhas por aba (uma por mês), e os dados começam na linha 3 — então cabem **124 empresas** com o ano completo nas abas onde todas entram (3. FATURAMENTO e 4. CONSULTAS). As abas 1. FOLHA e 2. SPED têm mais folga, porque só recebem parte das empresas.
 
   O limite não avisa aos poucos: ele estoura ao **abrir dezembro**, com o ano inteiro já lançado. Se estiver perto de 124, aumente o número antes de virar o ano.
 
-  Para ir além, aumente `LIMITE_LINHAS` **e** estenda as listas suspensas e as cores condicionais até a nova linha. **Atenção:** as fórmulas do COMPARATIVO gravam o limite no próprio texto no momento em que a empresa é cadastrada. As empresas que já estão lá continuam com `$H$1500` e param de somar as linhas acima disso **sem dar erro** — depois de aumentar o limite, recadastre as fórmulas do COMPARATIVO.
+  Para ir além, aumente `LIMITE_LINHAS` **e** estenda as listas suspensas e as cores condicionais até a nova linha. **Atenção:** as fórmulas do PAINEL e do COMPARATIVO (PENDÊNCIAS) têm a faixa escrita no próprio texto (ex.: `$H$3:$H$1376`). Estenda essas faixas também — senão elas param de somar as linhas de baixo **sem dar erro**.
 - **Histórico de versões**: Arquivo → Histórico de versões. Dá para ver quem mudou o quê e voltar atrás. É a sua rede de segurança.
 - **Proteja as fórmulas**: botão direito na aba → Proteger intervalo. Sugestão: colunas CNPJ, REGIME e TOTAL, e as abas PAINEL, COMPARATIVO e LISTAS.
 
@@ -347,7 +340,7 @@ Para trocar: **Extensões → Apps Script**, ache essa linha e mude o texto entr
 
 ---
 
-## 14. Compartilhamento
+## 13. Compartilhamento
 
 - O script **vai junto** com a planilha. Quem receber vê o menu 🧮 Modo Contador.
 - Só quem tem acesso de **Editor** consegue usar as funções (elas escrevem na planilha). Como *Leitor*, a pessoa vê os dados mas não usa o menu.
@@ -357,7 +350,7 @@ Para trocar: **Extensões → Apps Script**, ache essa linha e mude o texto entr
 
 ---
 
-## 15. Resumo de um mês típico
+## 14. Resumo de um mês típico
 
 ```
 1. 🧮 Modo Contador → Abrir novo mês → MAIO
@@ -366,7 +359,7 @@ Para trocar: **Extensões → Apps Script**, ache essa linha e mude o texto entr
 4. Aba 3. FATURAMENTO → filtra MAIO → lança valores → marca ENVIADOS
 5. Aba 4. CONSULTAS   → filtra MAIO → marca
 6. PAINEL             → confere se ficou tudo verde
-7. COMPARATIVO        → compara o faturamento com os meses anteriores
+7. COMPARATIVO        → confere as pendências de cada mês
 ```
 
 **Entrou empresa nova no meio do caminho?**

@@ -3,13 +3,13 @@
 Sistema de acompanhamento mensal de obrigações contábeis, feito sobre
 **Google Sheets + Google Apps Script**. Controla, por empresa e por mês,
 as etapas de Folha, SPED, Faturamento e Consultas, com painel de
-acompanhamento, calendário de vencimentos e bloco de notas.
+acompanhamento, ficha por empresa e bloco de notas.
 
 ## Arquivos do repositório
 
 | Arquivo | O que é |
 |---|---|
-| `Codigo.gs` | Todo o script do Apps Script (menu, cadastro, calendário, notas…). |
+| `Codigo.gs` | Todo o script do Apps Script (menu, cadastro, ficha da empresa, notas…). |
 | `MANUAL_CONTROLE_EMPRESAS.md` | Manual completo: instalação, rotina, solução de problemas. |
 | `CONTROLE_EMPRESAS_MODELO.xlsx` | **Modelo vazio** da planilha (estrutura, fórmulas e formatação, **sem dados de cliente**). |
 | `gerar_modelo.py` | Gera o modelo limpo a partir de um arquivo real e **recusa** se sobrar dado. |

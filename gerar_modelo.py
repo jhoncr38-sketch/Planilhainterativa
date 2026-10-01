@@ -4,10 +4,13 @@ gerar_modelo.py — cria um MODELO LIMPO (sem dados de cliente) a partir do
 arquivo real da planilha, e RECUSA se sobrar qualquer dado.
 
 O que ele apaga:
-  - CADASTRO: nomes, CNPJ, inscrições e SENHAS (linhas 3+)
+  - CADASTRO: nomes, CNPJ, inscrições e SENHAS (linhas 3+, todas as colunas)
   - 1. FOLHA / 2. SPED / 3. FATURAMENTO / 4. CONSULTAS: todas as linhas de dados
-  - COMPARATIVO: as linhas de empresa (entre "EMPRESA" e "TOTAL GERAL")
-  - VENCIMENTOS: os prazos (mantém a lista de categorias em F:G)
+  - COMPARATIVO: as linhas de empresa (entre "EMPRESA" e "TOTAL GERAL"),
+    se ainda existirem — o bloco de faturamento foi removido em 2026-09
+    (removerFaturamentoDoComparativo); em arquivo novo não há o que limpar
+  - VENCIMENTOS: os prazos, se a aba ainda existir (era do calendário,
+    removido em 2026-09; mantém a lista de categorias em F:G)
   - NOTAS: todas as anotações
 
 O que ele mantém: cabeçalhos, fórmulas, listas suspensas e a estrutura.
@@ -67,7 +70,8 @@ def main():
     wb = openpyxl.load_workbook(entrada)
 
     if "CADASTRO" in wb.sheetnames:
-        limpar(wb["CADASTRO"], 3, 1, 10)
+        # todas as colunas: o CADASTRO pode ganhar coluna nova (a SENHA muda de lugar)
+        limpar(wb["CADASTRO"], 3, 1, wb["CADASTRO"].max_column)
     for nome in ETAPAS:
         if nome in wb.sheetnames:
             limpar(wb[nome], 3, 1, wb[nome].max_column)
@@ -90,9 +94,11 @@ def main():
     problemas = []
     if "CADASTRO" in v.sheetnames:
         c = v["CADASTRO"]
-        for col, rot in [(1, "empresa"), (2, "CNPJ"), (8, "IE"), (9, "IM"), (10, "SENHA")]:
+        # confere TODAS as colunas (nome no cabeçalho só para a mensagem)
+        for col in range(1, c.max_column + 1):
             q = contar(c, col)
             if q:
+                rot = c.cell(row=2, column=col).value or f"coluna {col}"
                 problemas.append(f"CADASTRO/{rot}: {q}")
     for nome in ETAPAS:
         if nome in v.sheetnames and contar(v[nome], 2):
