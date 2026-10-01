@@ -179,9 +179,11 @@ As abas de etapa buscam o CNPJ e o regime **pelo nome**, e a Ficha da empresa ju
 **FICHA DA EMPRESA** — 🧮 Modo Contador → **Ficha da empresa**. Mostra o ano inteiro de **uma** empresa numa janela só, sem precisar filtrar as 4 abas:
 
 - **Cadastro**: CNPJ, regime, perfil, IE, IM, se faz Folha/SPED/EFD Contribuições e se está ativa. A **senha não aparece** na ficha, de propósito.
-- **Quatro números**: quantas etapas estão em aberto no ano (Pendente, Erro ou em branco), faturamento do ano, média por mês e notas pendentes.
-- **Status por mês**: uma linha por etapa e uma coluna por mês, com as mesmas cores da planilha. Cada linha mostra a **coluna final** da etapa (a mesma que o PAINEL usa). **Clique no nome da etapa** para ver as outras colunas dela. Na última linha fica o faturamento total de cada mês (passe o mouse para ver o valor exato). Meses ainda não abertos aparecem com o cabeçalho cinza.
+- **Quatro números**: quantas etapas estão em aberto no ano — separado em pendentes, erros e em branco —, faturamento do ano, média por mês e notas pendentes.
+- **Status por mês**: uma linha por etapa e uma coluna por mês, com as mesmas cores da planilha. Cada linha mostra a **coluna final** da etapa (a mesma que o PAINEL usa). **Clique no nome da etapa** para ver as outras colunas dela. Status **em branco** num mês aberto aparece como uma caixinha tracejada amarela: é o que falta preencher. Na última linha fica o faturamento total de cada mês (passe o mouse para ver o valor exato). Meses ainda não abertos aparecem com o cabeçalho cinza.
 - **Notas da empresa**: as notas do Bloco de notas ligadas a ela (pendentes e avisos; as concluídas ficam em "ver / esconder").
+
+**Passar de empresa:** as setas **◀ ▶** ao lado da lista (ou as teclas ← → do teclado) vão para a empresa anterior/seguinte, em ordem alfabética.
 
 **Atalho:** se o cursor estiver na linha de uma empresa (nas abas de etapa ou no CADASTRO) quando você abrir a ficha, ela já abre nessa empresa. A ficha só **lê**: não altera nada na planilha.
 

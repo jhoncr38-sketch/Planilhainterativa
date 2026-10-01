@@ -2116,6 +2116,7 @@ function htmlImportar() {
 //  dados do cadastro, o status de cada etapa mês a mês, o faturamento e
 //  as anotações da empresa. Só lê — não altera nada na planilha.
 //  Se o cursor estiver numa linha de empresa ao abrir, ela já vem escolhida.
+//  Setas ◀ ▶ (ou ← →) passam para a empresa anterior/seguinte.
 // ============================================================
 
 // status -> [fundo, texto, rótulo curto]. Mesmas cores da formatação
@@ -2180,7 +2181,7 @@ function fichaEmpresa(nome) {
   const abertos = MESES.map(() => false);
   const etapas = [];
   let faturamento = MESES.map(() => null);
-  let emAberto = 0;
+  const aberto = { pendentes: 0, erros: 0, branco: 0 };
 
   for (const nomeAba in ABAS_ETAPA) {
     const cfg = ABAS_ETAPA[nomeAba];
@@ -2214,7 +2215,9 @@ function fichaEmpresa(nome) {
     porMes.forEach(l => {
       if (!l) return;
       const st = String(l[cfg.colFeito - 1]).trim();
-      if (st === 'Pendente' || st === 'Erro' || st === '') emAberto++;
+      if (st === 'Pendente') aberto.pendentes++;
+      else if (st === 'Erro') aberto.erros++;
+      else if (st === '') aberto.branco++;
     });
     if (cfg.colTotal) faturamento = porMes.map(l => l ? celulaFicha(l[cfg.colTotal - 1], 'moeda') : null);
 
@@ -2243,7 +2246,7 @@ function fichaEmpresa(nome) {
     meses: MESES, abertos: abertos, etapas: etapas,
     faturamento: faturamento, totalAno: totalAno, mesesLancados: lancados.length,
     media: lancados.length ? totalAno / lancados.length : 0,
-    emAberto: emAberto, notas: notas,
+    emAberto: aberto.pendentes + aberto.erros + aberto.branco, aberto: aberto, notas: notas,
   };
 }
 
@@ -2252,8 +2255,12 @@ function htmlFicha(escolhida) {
   return `<!DOCTYPE html><html><head><base target="_top"><meta charset="utf-8">${estiloDialogo()}
 <style>
 body { padding: 14px 18px; }
-.topo { display: flex; align-items: center; gap: 10px; margin-bottom: 12px; }
-.topo select { width: 360px; }
+.topo { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
+.topo select { width: 340px; }
+.topo .nav { width: 32px; height: 34px; border: 1px solid #C9D2E3; border-radius: 4px; background: #fff; color: ${COR_AZUL}; font-size: 12px; cursor: pointer; }
+.topo .nav:hover { background: #EEF2FA; }
+.topo .nav:disabled { color: #C9D2E3; background: #fff; cursor: default; }
+.topo .pos { color: #595959; font-size: 11px; min-width: 50px; }
 .topo .dica { color: #808080; font-size: 11px; }
 .cab { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .cab .nome { font-size: 17px; font-weight: bold; color: ${COR_NAVY}; }
@@ -2289,11 +2296,13 @@ table.grade { width: 100%; border-collapse: collapse; table-layout: fixed; font-
 .grade td.naoentra { color: #A0A0A0; font-style: italic; text-align: left; padding-left: 8px; }
 .grade tr.off td.rot { color: #A0A0A0; }
 .st { display: inline-block; min-width: 38px; padding: 2px 4px; border-radius: 4px; font-size: 10.5px; font-weight: bold; background: #EEF1F7; color: #3c4757; }
+.st.embranco { background: transparent; border: 1px dashed #D4A72C; padding: 1px 3px; }
 .nada { color: #D0D0D0; }
-.branco { color: #A0A0A0; }
+.vz { color: #B0B0B0; }
 .num { font-variant-numeric: tabular-nums; }
 .legenda { display: flex; flex-wrap: wrap; gap: 6px 12px; font-size: 10.5px; color: #595959; margin-top: 8px; }
 .legenda .st { min-width: 0; margin-right: 3px; }
+.legenda .st.embranco { min-width: 22px; }
 .nota { background: #fff; border: 1px solid #E4E9F0; border-left: 4px solid #ccc; border-radius: 8px; padding: 8px 11px; margin-bottom: 7px; }
 .nota .top { display: flex; justify-content: space-between; font-size: 10.5px; margin-bottom: 3px; }
 .nota .prio { font-weight: bold; text-transform: uppercase; letter-spacing: .3px; }
@@ -2305,8 +2314,11 @@ table.grade { width: 100%; border-collapse: collapse; table-layout: fixed; font-
 .inicio { text-align: center; color: #9AA7B8; font-size: 13px; padding: 90px 0; }
 </style></head><body>
 <div class="topo">
-  <select id="emp"></select>
-  <span class="dica">Dica: com o cursor na linha de uma empresa, a ficha já abre nela.</span>
+  <button class="nav" id="ant" onclick="passo(-1)" title="Empresa anterior (seta ←)">◀</button>
+  <select id="emp" title="Dica: com o cursor na linha de uma empresa, a ficha já abre nela."></select>
+  <button class="nav" id="prox" onclick="passo(1)" title="Próxima empresa (seta →)">▶</button>
+  <span class="pos" id="pos"></span>
+  <span class="dica">← → trocam de empresa</span>
 </div>
 <div id="conteudo"></div>
 <div class="botoes"><button class="pri" onclick="google.script.host.close()">Fechar</button></div>
@@ -2328,14 +2340,22 @@ function curto(v){
   return v.toLocaleString('pt-BR',{maximumFractionDigits:0});
 }
 
+// tipo: status | data | moeda | total (o faturamento do mês)
 function celula(v, tipo){
   if (v === null) return '<td class="nada" title="sem linha neste mês">—</td>';
-  if (v === '') return '<td class="branco" title="em branco">·</td>';
-  if (tipo === 'moeda') return '<td class="num" title="' + reais(v) + '">' + curto(v) + '</td>';
-  if (tipo === 'data') return '<td>' + esc(v) + '</td>';
-  var s = STATUS[v];
-  if (!s) return '<td title="' + esc(v) + '"><span class="st">' + esc(v) + '</span></td>';
-  return '<td title="' + esc(v) + '"><span class="st" style="background:' + s[0] + ';color:' + s[1] + '">' + s[2] + '</span></td>';
+  var cls = [], tit, txt;
+  if (v === '' && (tipo === 'status' || tipo === 'total')) {        // vazio aqui = falta fazer: destaca
+    tit = 'em branco — falta preencher'; txt = '<span class="st embranco">&nbsp;</span>';
+  }
+  else if (v === '') { tit = 'em branco'; txt = '<span class="vz">·</span>'; }   // valor/data vazio: normal
+  else if (tipo === 'moeda' || tipo === 'total') { cls.push('num'); tit = reais(v); txt = curto(v); }
+  else if (tipo === 'data') { tit = v; txt = esc(v); }
+  else {
+    var s = STATUS[v]; tit = v;
+    txt = s ? '<span class="st" style="background:' + s[0] + ';color:' + s[1] + '">' + s[2] + '</span>'
+            : '<span class="st">' + esc(v) + '</span>';
+  }
+  return '<td' + (cls.length ? ' class="' + cls.join(' ') + '"' : '') + ' title="' + esc(tit) + '">' + txt + '</td>';
 }
 
 function cabecalho(f){
@@ -2351,10 +2371,14 @@ function cabecalho(f){
 function kpi(rot, val, cls, sub){
   return '<div class="kpi ' + cls + '"><div class="r">' + rot + '</div><div class="v">' + val + '</div><div class="s">' + sub + '</div></div>';
 }
+function plural(n, um, varios){ return n + ' ' + (n === 1 ? um : varios); }
 function kpis(f){
-  var np = f.notas.pendentes.length;
+  var np = f.notas.pendentes.length, a = f.aberto;
+  var detalhe = f.emAberto
+    ? [plural(a.pendentes, 'pendente', 'pendentes'), plural(a.erros, 'erro', 'erros'), a.branco + ' em branco'].join(' · ')
+    : 'tudo em dia';
   return '<div class="kpis">' +
-    kpi('Em aberto no ano', f.emAberto, f.emAberto ? 'ruim' : 'bom', 'Pendente, Erro ou em branco') +
+    kpi('Em aberto no ano', f.emAberto, f.emAberto ? 'ruim' : 'bom', detalhe) +
     kpi('Faturamento no ano', reais(f.totalAno), '', f.mesesLancados + ' mês(es) lançado(s)') +
     kpi('Média por mês', reais(f.media), '', 'dos meses lançados') +
     kpi('Notas pendentes', np, np ? 'atencao' : '', f.notas.avisos.length + ' aviso(s)') +
@@ -2386,7 +2410,7 @@ function grade(f){
     });
   });
   h += '<tr class="fat"><td class="rot">Faturamento (total)</td>';
-  f.faturamento.forEach(function(v){ h += celula(v, 'moeda'); });
+  f.faturamento.forEach(function(v){ h += celula(v, 'total'); });
   return h + '</tr></tbody></table>';
 }
 
@@ -2396,7 +2420,7 @@ function legenda(){
     var s = STATUS[nome];
     h += '<span><span class="st" style="background:' + s[0] + ';color:' + s[1] + '">' + s[2] + '</span>' + esc(nome) + '</span>';
   }
-  return h + '<span><b class="nada">—</b> sem linha no mês</span><span><b class="branco">·</b> em branco</span></div>';
+  return h + '<span><b class="nada">—</b> sem linha no mês</span><span><span class="st embranco">&nbsp;</span>em branco (falta preencher)</span></div>';
 }
 
 function cartao(n, cor, rot, feita){
@@ -2428,9 +2452,24 @@ function abre(k){
   document.getElementById('seta' + k).textContent = mostrar ? '▾' : '▸';
 }
 
+// setas ◀ ▶ (e ← → do teclado): empresa anterior / seguinte da lista
+function passo(d){
+  var i = sel.selectedIndex + d;
+  if (i < 1 || i >= sel.options.length) return;
+  sel.selectedIndex = i;
+  carregar(sel.value);
+}
+function atualizaNav(){
+  var i = sel.selectedIndex, n = sel.options.length - 1;
+  document.getElementById('ant').disabled = i <= 1;
+  document.getElementById('prox').disabled = i >= n;
+  document.getElementById('pos').textContent = i >= 1 ? i + ' de ' + n : n + ' empresas';
+}
+
 function carregar(nome){
   var meu = ++pedido;
   var alvo = document.getElementById('conteudo');
+  atualizaNav();
   if (!nome) { alvo.innerHTML = '<div class="inicio">Escolha uma empresa na lista acima.</div>'; return; }
   alvo.innerHTML = '<div id="status" class="load">Montando a ficha de ' + esc(nome) + '...</div>';
   google.script.run.withSuccessHandler(function(f){
@@ -2450,6 +2489,11 @@ EMPRESAS.forEach(function(e){
   var o = document.createElement('option'); o.value = e.nome; o.text = e.nome + (e.ativa ? '' : '  (inativa)'); sel.add(o);
 });
 sel.addEventListener('change', function(){ carregar(sel.value); });
+document.addEventListener('keydown', function(e){
+  if (e.target === sel || e.altKey || e.ctrlKey || e.metaKey) return;   // na lista, as setas já trocam
+  if (e.key === 'ArrowLeft')  { e.preventDefault(); passo(-1); }
+  if (e.key === 'ArrowRight') { e.preventDefault(); passo(1); }
+});
 sel.value = INICIAL;
 carregar(INICIAL);
 </script>
