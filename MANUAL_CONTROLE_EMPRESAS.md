@@ -19,7 +19,7 @@ A ideia central: **o que é fixo fica separado do que muda todo mês.**
 | **1. FOLHA** | Folhas e encargos. Só empresas com FAZ FOLHA = Sim. |
 | **2. SPED** | SPED ICMS/IPI/Contribuições. Empresas com FAZ SPED = Sim ou FAZ EFD CONTRIB.? = Sim. |
 | **3. FATURAMENTO** | Faturamento do mês. Todas as empresas ativas. |
-| **4. CONSULTAS** | Consultas fiscais. Todas as empresas ativas. |
+| **4. CONSULTAS** | Consultas fiscais. Todas as empresas ativas. A coluna **OBSERVAÇÃO** é texto livre para anotar o que você achou na consulta (débito, certidão positiva, pendência a cobrar...). |
 | **COMPARATIVO** | Pendências por mês, por etapa. O faturamento de cada empresa fica na **Ficha da empresa**. |
 | **COMO USAR** | Resumo rápido dentro da própria planilha. |
 | **LISTAS** | Bastidores (as listas suspensas). Fica oculta — não mexa. |
@@ -53,7 +53,7 @@ Pronto: aparece o menu **🧮 Modo Contador** no topo.
 
 1. No **PAINEL**, escolha o mês em que você vai começar (a célula azul).
    *Importante: o script cadastra a empresa no mês que estiver selecionado aqui.*
-   Ao abrir a planilha, esse seletor já vem no **mês atual** — mas você troca quando quiser.
+   Ao abrir a planilha, esse seletor já vem no **mês de trabalho**: o mês atual, se ele já foi aberto; senão, o último mês aberto (ex.: em outubro, ainda lançando março → MARÇO). Você troca quando quiser.
 2. **🧮 Modo Contador → Cadastrar empresa nova**. Abre um formulário com tudo na mesma tela:
 
 | Campo | Observação |
@@ -118,7 +118,7 @@ Se nenhum mês foi aberto ainda (planilha nova), a empresa fica só no cadastro 
 | **Retificada** | Declaração retificada |
 | **Erro** | Travou / precisa de atenção |
 
-O que conta como **pendência** no PAINEL e no COMPARATIVO: *Pendente* + *Erro*.
+Na coluna final de cada etapa, **Concluído**, **Sem movimento**, **Não se aplica** e **Retificada** contam como **resolvido**. Todo o resto — *Pendente*, *Erro* e **em branco** — conta como **em aberto**. A regra é a mesma no PAINEL, no COMPARATIVO, na Ficha da empresa e no e-mail de pendências.
 
 A coluna que sinaliza que a etapa acabou é a **CONFERÊNCIA** (no Faturamento, é **ENVIADOS**).
 
@@ -153,6 +153,7 @@ Da coluna D em diante, o CADASTRO é lido pelo **cabeçalho** (linha 2) — EMPR
 | **Empresa voltou** | O mesmo menu — ele reativa. |
 | **Cadastrei errado, quero sumir com ela** | 🧮 Modo Contador → **Excluir empresa de vez**. Escolha na lista, veja quantas linhas vão embora e confirme. Não tem volta. |
 | **Abri o mês errado** | 🧮 Modo Contador → **Excluir um mês inteiro**. Veja a seção 9.1. |
+| **A empresa passou a fazer SPED/folha (ou voltou) e o mês já está aberto** | Mude no CADASTRO e depois 🧮 Modo Contador → **Incluir empresa num mês aberto**. Escolha a empresa e o mês: a janela mostra em quais abas ela vai entrar e em quais já está, e você confirma. Vale também para os meses abertos depois dele. |
 | **Ver o ano inteiro de uma empresa** | 🧮 Modo Contador → **Ficha da empresa**. Veja a seção 7. |
 | **Conferir se algum faturamento está estranho** | 🧮 Modo Contador → **Conferir faturamentos suspeitos**. Veja a seção 10.1. |
 | **Anotar lembretes e avisos** | 🧮 Modo Contador → **Bloco de notas** (ou clique no ícone 📝 no painel). Veja a seção 8. |
@@ -165,22 +166,23 @@ As abas de etapa buscam o CNPJ e o regime **pelo nome**, e a Ficha da empresa ju
 ### Três armadilhas
 
 - **Cadastrar empresa direto no CADASTRO, na mão, funciona pela metade**: ela só entra a partir do próximo mês que você abrir — **não entra nos meses que já estão abertos**. Cadastre sempre pelo menu.
-- **FAZ FOLHA?, FAZ SPED? e FAZ EFD CONTRIB.? só valem para os meses seguintes.** Mudar para "Sim" hoje não faz a empresa aparecer nos meses que já estão abertos — ela entra no próximo "Abrir novo mês". Para incluir num mês já aberto, digite o mês e o nome numa linha vazia da aba (CNPJ e regime aparecem sozinhos).
+- **FAZ FOLHA?, FAZ SPED? e FAZ EFD CONTRIB.? só valem para os meses seguintes.** Mudar para "Sim" hoje não faz a empresa aparecer nos meses que já estão abertos — ela entra no próximo "Abrir novo mês". Para incluir num mês já aberto, use 🧮 Modo Contador → **Incluir empresa num mês aberto** (se o cursor estiver na linha dela no CADASTRO, ela já vem escolhida).
 - **Campo ATIVA? em branco conta como ativa**, para ninguém sumir por descuido.
 
 ---
 
 ## 7. Acompanhar e comparar
 
-**PAINEL** — escolha o mês na célula azul (ao abrir, já vem no mês atual). Mostra, por etapa: quantas empresas entram naquele mês, quantas estão concluídas, quantas estão pendentes ou com erro, e a barra de progresso.
+**PAINEL** — escolha o mês na célula azul (ao abrir, já vem no mês de trabalho). Mostra, por etapa: quantas empresas entram naquele mês, quantas estão **concluídas** (Concluído, Sem movimento, Não se aplica ou Retificada), quantas estão **em aberto** (Pendente, Erro ou em branco) e o progresso — que chega a 100% quando tudo está resolvido.
 
-**COMPARATIVO** — *Pendências por mês*: quantas declarações ficaram sem concluir em cada etapa, em cada mês. **Vermelho** = tem pendência, **verde** = tudo enviado. Para ver o faturamento de uma empresa mês a mês, use a **Ficha da empresa** (abaixo).
+**COMPARATIVO** — *Pendências por mês*: quantas declarações estão em aberto (Pendente, Erro ou em branco) em cada etapa, em cada mês. **Vermelho** = tem pendência, **verde** = tudo resolvido. Para ver o faturamento de uma empresa mês a mês, use a **Ficha da empresa** (abaixo).
 
 **FICHA DA EMPRESA** — 🧮 Modo Contador → **Ficha da empresa**. Mostra o ano inteiro de **uma** empresa numa janela só, sem precisar filtrar as 4 abas:
 
 - **Cadastro**: CNPJ, regime, perfil, IE, IM, se faz Folha/SPED/EFD Contribuições e se está ativa. A **senha não aparece** na ficha, de propósito.
 - **Quatro números**: quantas etapas estão em aberto no ano — separado em pendentes, erros e em branco —, faturamento do ano, média por mês e notas pendentes.
 - **Status por mês**: uma linha por etapa e uma coluna por mês, com as mesmas cores da planilha. Cada linha mostra a **coluna final** da etapa (a mesma que o PAINEL usa). **Clique no nome da etapa** para ver as outras colunas dela. Status **em branco** num mês aberto aparece como uma caixinha tracejada amarela: é o que falta preencher. Na última linha fica o faturamento total de cada mês (passe o mouse para ver o valor exato). Meses ainda não abertos aparecem com o cabeçalho cinza.
+- **Observações**: o que foi anotado na coluna OBSERVAÇÃO da aba 4. CONSULTAS, mês a mês. Na grade, a linha OBSERVAÇÃO (dentro de Consultas) mostra 💬 nos meses com texto — passe o mouse para ler.
 - **Notas da empresa**: as notas do Bloco de notas ligadas a ela (pendentes e avisos; as concluídas ficam em "ver / esconder").
 
 **Passar de empresa:** as setas **◀ ▶** ao lado da lista (ou as teclas ← → do teclado) vão para a empresa anterior/seguinte, em ordem alfabética.
@@ -271,7 +273,7 @@ Não tem botão no menu — funciona por acionador automático:
    - Tipo: por exemplo, **Semanal**, segunda de manhã.
 4. Salve.
 
-Você recebe um e-mail com as pendências do mês que estiver selecionado no PAINEL, listando as empresas que faltam em cada etapa, mais o link da planilha.
+Você recebe um e-mail com as pendências do **mês de trabalho** (o mês atual, se já foi aberto; senão, o último mês aberto), listando as empresas que faltam em cada etapa, mais o link da planilha.
 
 > O e-mail vai para quem criou o acionador. Se outra pessoa quiser receber, ela precisa criar o acionador dela.
 
@@ -348,7 +350,7 @@ Para trocar: **Extensões → Apps Script**, ache essa linha e mude o texto entr
 - Só quem tem acesso de **Editor** consegue usar as funções (elas escrevem na planilha). Como *Leitor*, a pessoa vê os dados mas não usa o menu.
 - **Cada pessoa autoriza por conta própria** na primeira vez, com aquela mesma tela de "app não verificado". Avise antes.
 - Quem é Editor também **consegue ver e alterar o código**. Não dá para trancar.
-- **Atenção à coluna SENHA (J do CADASTRO)**: quem tem acesso à planilha vê essa coluna. Se for compartilhar, considere ocultar a coluna ou proteger o intervalo — ou manter as senhas num gerenciador de senhas separado.
+- **Atenção à coluna SENHA do CADASTRO**: quem tem acesso à planilha vê essa coluna. Se for compartilhar, considere ocultar a coluna ou proteger o intervalo — ou manter as senhas num gerenciador de senhas separado.
 
 ---
 
@@ -359,7 +361,7 @@ Para trocar: **Extensões → Apps Script**, ache essa linha e mude o texto entr
 2. Aba 1. FOLHA       → filtra MAIO → marca os status
 3. Aba 2. SPED        → filtra MAIO → agenda / baixa / importa → marca
 4. Aba 3. FATURAMENTO → filtra MAIO → lança valores → marca ENVIADOS
-5. Aba 4. CONSULTAS   → filtra MAIO → marca
+5. Aba 4. CONSULTAS   → filtra MAIO → marca (e anota em OBSERVAÇÃO o que precisar)
 6. PAINEL             → confere se ficou tudo verde
 7. COMPARATIVO        → confere as pendências de cada mês
 ```
