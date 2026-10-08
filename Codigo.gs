@@ -299,7 +299,12 @@ function acrescentarLinhas(aba, nomeAba, pares) {
   const cfg = ABAS_ETAPA[nomeAba];
   const linha = ultimaLinha(aba) + 1, qtd = pares.length;
 
+  // a aba precisa ter linhas até onde vamos escrever (senão o Google dá erro)
+  const falta = linha + qtd - 1 - aba.getMaxRows();
+  if (falta > 0) aba.insertRowsAfter(aba.getMaxRows(), falta);
+
   formatarEtapa(aba, nomeAba, linha, qtd);
+  estenderListasECores(aba, nomeAba, linha, qtd);
   aba.getRange(linha, 1, qtd, 2).setValues(pares.map(p => [p[0], p[1].empresa]));
   marcarNaoSeAplica(aba, nomeAba, linha, pares.map(p => p[1]));
 
@@ -315,6 +320,33 @@ function acrescentarLinhas(aba, nomeAba, pares) {
   if (cfg.colTotal) aba.getRange(linha, cfg.colTotal, qtd, 1).setFormulas(fTotal);
 
   ajustarFiltro(aba, cfg.ultimaCol);
+}
+
+/** Garante a lista suspensa e as cores nas linhas novas. As faixas da
+ *  planilha acabam numa linha fixa e ENCOLHEM quando se apaga linha (excluir
+ *  mês/empresa) — sem isto, os últimos meses do ano ficavam sem lista.
+ *  Lista: copiada da primeira linha de dados (linha 3), coluna a coluna.
+ *  Cores: as regras que começam na linha 3 passam a ir até o fim da aba. */
+function estenderListasECores(aba, nomeAba, linha, qtd) {
+  const cfg = ABAS_ETAPA[nomeAba];
+  if (linha > LINHA_INICIAL) {
+    aba.getRange(LINHA_INICIAL, 1, 1, cfg.ultimaCol).getDataValidations()[0].forEach((dv, i) => {
+      if (dv) aba.getRange(linha, i + 1, qtd, 1).setDataValidation(dv);
+    });
+  }
+
+  const ate = linha + qtd - 1, fimAba = aba.getMaxRows();
+  const curta = g => g.getRow() === LINHA_INICIAL && g.getLastRow() < ate;
+  let mudou = false;
+  const regras = aba.getConditionalFormatRules().map(regra => {
+    const faixas = regra.getRanges();
+    if (!faixas.some(curta)) return regra;
+    mudou = true;
+    return regra.copy().setRanges(faixas.map(g => curta(g)
+      ? aba.getRange(LINHA_INICIAL, g.getColumn(), fimAba - LINHA_INICIAL + 1, g.getNumColumns())
+      : g)).build();
+  });
+  if (mudou) aba.setConditionalFormatRules(regras);
 }
 
 /** Refaz o filtro cobrindo todas as linhas de dados.
@@ -376,6 +408,102 @@ function estiloDialogo() {
   '#status.erro { display: block; background: #FFC7CE; color: #9C0006; }' +
   '#status.load { display: block; background: #EEF1F7; color: #2E5496; }' +
   '</style>';
+}
+
+/** CNPJ (só dígitos) de cada empresa, para a busca por CNPJ nas janelas.
+ *  CNPJ gravado como número perde o zero à esquerda: completa para 14. */
+function cnpjPorEmpresa() {
+  const aba = planilha().getSheetByName('CADASTRO');
+  const fim = ultimaLinhaCol(aba, 'A');
+  const mapa = {};
+  if (fim < LINHA_INICIAL) return mapa;
+  aba.getRange(LINHA_INICIAL, 1, fim - LINHA_INICIAL + 1, 2).getValues().forEach(l => {
+    if (l[0] === '' || l[0] === null) return;
+    const d = String(l[1]).replace(/\D/g, '');
+    mapa[String(l[0])] = (typeof l[1] === 'number' && d.length < 14) ? ('00000000000000' + d).slice(-14) : d;
+  });
+  return mapa;
+}
+
+/** Busca de empresa para as janelas: troca a lista suspensa por um campo que
+ *  filtra enquanto você digita — qualquer parte do nome, sem ligar para
+ *  acento ou maiúscula, ou o CNPJ. A lista original continua lá, escondida,
+ *  e é ela que a janela lê; por isso o resto de cada janela não muda.
+ *  Uso: pôr buscaEmpresaHtml() no <head> e chamar ativarBusca("id") no script. */
+function buscaEmpresaHtml() {
+  return `<style>
+.busca { position: relative; display: inline-block; vertical-align: middle; }
+.busca input { width: 100%; box-sizing: border-box; padding: 8px 9px; border: 1px solid #C9D2E3; border-radius: 4px;
+  font-size: 13px; font-family: inherit; background: #fff; color: #262626; }
+.busca input:focus { outline: none; border-color: ${COR_AZUL}; box-shadow: 0 0 0 2px rgba(46,84,150,.15); }
+.buscaLista { position: absolute; left: 0; right: 0; top: 100%; margin-top: 2px; z-index: 50; display: none;
+  background: #fff; border: 1px solid #C9D2E3; border-radius: 4px; max-height: 210px; overflow-y: auto;
+  box-shadow: 0 4px 14px rgba(20,40,70,.15); text-align: left; }
+.buscaLista.on { display: block; }
+.buscaLista div { padding: 6px 9px; font-size: 12.5px; cursor: pointer; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.buscaLista div.ativo, .buscaLista div:hover { background: #EEF2FA; color: ${COR_NAVY}; }
+.buscaLista div.nenhuma { color: #9AA7B8; cursor: default; background: #fff; }
+</style>
+<script>
+var CNPJ_EMPRESA = ${JSON.stringify(cnpjPorEmpresa()).replace(/</g, '\\u003c')};
+function ativarBusca(id, dica) {
+  var sel = document.getElementById(id);
+  if (!sel || sel._busca) return;
+  sel._busca = true;
+  var wrap = document.createElement('div'); wrap.className = 'busca';
+  wrap.style.width = sel.offsetWidth ? sel.offsetWidth + 'px' : '100%';
+  var inp = document.createElement('input'); inp.type = 'text'; inp.autocomplete = 'off';
+  inp.placeholder = dica || '🔍 Digite parte do nome ou o CNPJ';
+  var lista = document.createElement('div'); lista.className = 'buscaLista';
+  wrap.appendChild(inp); wrap.appendChild(lista);
+  sel.parentNode.insertBefore(wrap, sel);
+  sel.style.display = 'none';
+  var itens = [], ativo = -1, aberto = false, tudo = false;
+  function norm(s) { return String(s).toLowerCase().normalize('NFD').replace(/[\\u0300-\\u036f]/g, ''); }
+  function rotulo() { var o = sel.options[sel.selectedIndex]; return o && o.value ? o.text : ''; }
+  function sync() { if (!aberto) inp.value = rotulo(); }
+  function filtrar() {
+    var q = tudo ? '' : norm(inp.value.trim()), dig = tudo ? '' : inp.value.replace(/\\D/g, '');
+    itens = [];
+    for (var i = 0; i < sel.options.length; i++) {
+      var o = sel.options[i];
+      if (!o.value) { if (!q) itens.push(o); continue; }          // "— escolha —" / "— nenhuma —"
+      var cnpj = CNPJ_EMPRESA[o.value] || '';
+      if (!q || norm(o.text).indexOf(q) !== -1 || (dig.length >= 3 && cnpj.indexOf(dig) !== -1)) itens.push(o);
+    }
+    if (ativo >= itens.length) ativo = itens.length - 1;
+    lista.innerHTML = itens.length ? '' : '<div class="nenhuma">Nenhuma empresa encontrada</div>';
+    itens.forEach(function (o, k) {
+      var d = document.createElement('div'); d.textContent = o.text; d.title = o.text;
+      if (k === ativo) d.className = 'ativo';
+      d.addEventListener('mousedown', function (e) { e.preventDefault(); escolher(o); });
+      lista.appendChild(d);
+    });
+    var marcado = lista.children[ativo]; if (marcado && marcado.scrollIntoView) marcado.scrollIntoView({ block: 'nearest' });
+  }
+  function abrir() { aberto = true; lista.className = 'buscaLista on'; filtrar(); }
+  function fechar() { aberto = false; tudo = false; ativo = -1; lista.className = 'buscaLista'; sync(); }
+  function escolher(o) {
+    var mudou = sel.value !== o.value;
+    sel.value = o.value; fechar(); inp.blur();
+    if (mudou) sel.dispatchEvent(new Event('change'));
+  }
+  inp.addEventListener('focus', function () { tudo = true; ativo = -1; abrir(); inp.select(); });
+  inp.addEventListener('input', function () { tudo = false; ativo = 0; abrir(); });
+  inp.addEventListener('blur', function () { setTimeout(function () { if (document.activeElement !== inp) fechar(); }, 120); });
+  inp.addEventListener('keydown', function (e) {
+    if (e.key === 'ArrowDown' || e.key === 'ArrowUp') {
+      e.preventDefault(); if (!aberto) abrir();
+      ativo = Math.max(0, Math.min(itens.length - 1, ativo + (e.key === 'ArrowDown' ? 1 : -1))); filtrar();
+    } else if (e.key === 'Enter') {
+      e.preventDefault();
+      var o = itens[ativo >= 0 ? ativo : 0]; if (o && (ativo >= 0 || itens.length === 1)) escolher(o);
+    } else if (e.key === 'Escape') { e.preventDefault(); e.stopPropagation(); fechar(); inp.blur(); }
+  });
+  setInterval(sync, 300);       // acompanha quando a janela troca a escolha sozinha (setas, recarregar...)
+  sync();
+}
+</script>`;
 }
 
 // ============================================================
@@ -766,7 +894,7 @@ function executarInclusao(nome, mesIni) {
 function htmlIncluir(escolhida) {
   const abertos = mesesAbertos();
   const padrao = abertos.length ? mesDeTrabalho() : '';
-  return '<!DOCTYPE html><html><head><base target="_top">' + estiloDialogo() + '</head><body>' +
+  return '<!DOCTYPE html><html><head><base target="_top">' + estiloDialogo() + buscaEmpresaHtml() + '</head><body>' +
   '<div class="sub">Põe uma empresa já cadastrada num mês que já foi aberto — ex.: ela passou a fazer SPED ' +
   'ou foi reativada depois de você abrir o mês. Vale o que está no CADASTRO.</div>' +
   '<div class="linha">' +
@@ -812,6 +940,7 @@ function htmlIncluir(escolhida) {
   '    .executarInclusao(selE.value, selM.value);' +
   '}' +
   'selE.addEventListener("change", analisar); selM.addEventListener("change", analisar);' +
+  'ativarBusca("emp");' +
   'analisar();' +
   '</script></body></html>';
 }
@@ -827,7 +956,7 @@ function dialogoRenomear() {
 }
 
 function htmlRenomear() {
-  return '<!DOCTYPE html><html><head><base target="_top">' + estiloDialogo() + '</head><body>' +
+  return '<!DOCTYPE html><html><head><base target="_top">' + estiloDialogo() + buscaEmpresaHtml() + '</head><body>' +
   '<div class="sub">Troca o nome em tudo de uma vez: o cadastro e as 4 abas.</div>' +
   '<label>Empresa</label>' +
   '<select id="emp"><option value="">carregando...</option></select>' +
@@ -853,6 +982,7 @@ function htmlRenomear() {
   '  if (escolher) sel.value = escolher;' +
   '}' +
   'google.script.run.withSuccessHandler(function (lista) { preenche(lista); }).listarEmpresas();' +
+  'ativarBusca("emp");' +
   'function msg(txt, tipo) { var s = document.getElementById("status"); s.className = tipo; s.textContent = txt; }' +
   'function salvar() {' +
   '  var velho = sel.value;' +
@@ -941,7 +1071,7 @@ function dialogoAtivar() {
 }
 
 function htmlAtivar() {
-  return '<!DOCTYPE html><html><head><base target="_top">' + estiloDialogo() + '</head><body>' +
+  return '<!DOCTYPE html><html><head><base target="_top">' + estiloDialogo() + buscaEmpresaHtml() + '</head><body>' +
   '<div class="sub">Tira (ou devolve) a empresa dos meses novos, sem apagar o histórico.</div>' +
   '<label>Empresa</label>' +
   '<select id="emp"><option value="">carregando...</option></select>' +
@@ -968,6 +1098,7 @@ function htmlAtivar() {
   '  }' +
   '}).listarEmpresas();' +
   'sel.addEventListener("change", pinta);' +
+  'ativarBusca("emp");' +
   'function pinta() {' +
   '  var e = porNome[sel.value];' +
   '  var cartao = document.getElementById("cartao");' +
@@ -1034,7 +1165,7 @@ function dialogoExcluir() {
 }
 
 function htmlExcluir() {
-  return '<!DOCTYPE html><html><head><base target="_top">' + estiloDialogo() + '</head><body>' +
+  return '<!DOCTYPE html><html><head><base target="_top">' + estiloDialogo() + buscaEmpresaHtml() + '</head><body>' +
   '<div class="sub">Apaga o cadastro e TODO o histórico da empresa. Use só para cadastro errado.</div>' +
   '<label>Empresa</label>' +
   '<select id="emp"><option value="">carregando...</option></select>' +
@@ -1068,6 +1199,7 @@ function htmlExcluir() {
   '  }).listarEmpresas();' +
   '}' +
   'carrega();' +
+  'ativarBusca("emp");' +
   'sel.addEventListener("change", function () {' +
   '  document.getElementById("btnVer").disabled = !sel.value;' +
   '  document.getElementById("bloco").style.display = "none";' +
@@ -1215,7 +1347,8 @@ function virarOAno() {
     const filtro = aba.getFilter();
     if (filtro) filtro.remove();
 
-    const qtd = LIMITE_LINHAS - LINHA_INICIAL + 1;
+    const qtd = Math.min(LIMITE_LINHAS, aba.getMaxRows()) - LINHA_INICIAL + 1;   // aba pode ter menos linhas
+    if (qtd < 1) continue;
     if (cfg.colTotal) {
       // preserva a fórmula do TOTAL, limpando dos dois lados dela
       aba.getRange(LINHA_INICIAL, 1, qtd, cfg.colTotal - 1).clearContent();
@@ -1891,7 +2024,7 @@ function alternarConcluida(id) {
 }
 
 function htmlBlocoNotas() {
-  return `<!DOCTYPE html><html><head><base target="_top"><meta charset="utf-8">
+  return `<!DOCTYPE html><html><head><base target="_top"><meta charset="utf-8">${buscaEmpresaHtml()}
 <style>
 * { box-sizing: border-box; }
 html, body { height: 100%; }
@@ -1983,6 +2116,7 @@ google.script.run.withSuccessHandler(function(lista){
   var o=document.createElement('option'); o.value=''; o.text='— nenhuma —'; s.add(o);
   lista.forEach(function(e){ var op=document.createElement('option'); op.value=e.nome; op.text=e.nome; s.add(op); });
 }).listarEmpresas();
+ativarBusca('fEmp', '🔍 Nenhuma — digite para buscar a empresa');
 var svgEdit = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M4 20h4l11-11-4-4L4 16v4z" stroke="#7a8aa0" stroke-width="1.7" stroke-linejoin="round"></path></svg>';
 var svgDel  = '<svg width="15" height="15" viewBox="0 0 24 24" fill="none"><path d="M5 7h14M9 7V5h6v2M7 7l1 13h8l1-13" stroke="#c2506a" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"></path></svg>';
 function card(n){
@@ -2403,7 +2537,7 @@ function fichaEmpresa(nome) {
 
 function htmlFicha(escolhida) {
   const json = v => JSON.stringify(v).replace(/</g, '\\u003c');
-  return `<!DOCTYPE html><html><head><base target="_top"><meta charset="utf-8">${estiloDialogo()}
+  return `<!DOCTYPE html><html><head><base target="_top"><meta charset="utf-8">${estiloDialogo()}${buscaEmpresaHtml()}
 <style>
 body { padding: 14px 18px; }
 .topo { display: flex; align-items: center; gap: 8px; margin-bottom: 12px; }
@@ -2420,6 +2554,12 @@ body { padding: 14px 18px; }
 .tag.off { background: #E7E6E6; color: #595959; }
 .dados { display: flex; gap: 18px; flex-wrap: wrap; font-size: 12px; color: #595959; margin: 6px 0 12px; }
 .dados b { color: ${COR_NAVY}; margin-right: 3px; }
+.copiar { cursor: pointer; border-radius: 3px; }
+.copiar:hover { color: ${COR_NAVY}; text-decoration: underline dotted; }
+.copiar .ico { visibility: hidden; font-size: 10px; color: #9AA7B8; margin-left: 3px; }
+.copiar:hover .ico, .copiar .ico.ok, .copiar .ico.erro { visibility: visible; }
+.copiar .ico.ok { color: #006100; font-weight: bold; }
+.copiar .ico.erro { color: #9C6500; }
 .kpis { display: flex; gap: 10px; margin-bottom: 14px; }
 .kpi { flex: 1; background: #F7F9FC; border: 1px solid #E3E8F2; border-radius: 8px; padding: 9px 12px; }
 .kpi .r { font-size: 11px; color: #595959; }
@@ -2520,8 +2660,41 @@ function cabecalho(f){
     (f.ativa ? '<span class="tag ok">ATIVA</span>' : '<span class="tag off">INATIVA</span>');
   var dados = [['CNPJ', f.cnpj], ['IE', f.ie], ['IM', f.im], ['Folha', f.folha ? 'Sim' : 'Não'], ['SPED', f.sped ? 'Sim' : 'Não']];
   if (f.temContrib) dados.push(['EFD Contrib.', f.contrib === true ? 'Sim' : f.contrib === false ? 'Não' : '']);
-  dados = dados.map(function(d){ return '<span><b>' + d[0] + '</b>' + esc(d[1] || '—') + '</span>'; }).join('');
+  dados = dados.map(function(d){
+    var dig = (d[0] === 'CNPJ' || d[0] === 'IE' || d[0] === 'IM') ? String(d[1] || '').replace(/\\D/g, '') : '';
+    var valor = dig   // CNPJ, IE e IM: clicar copia só os números
+      ? '<span class="copiar" data-c="' + dig + '" title="Clique para copiar (só os números)" onclick="copiar(this)">' +
+        esc(d[1]) + '<span class="ico">⧉</span></span>'
+      : esc(d[1] || '—');
+    return '<span><b>' + d[0] + '</b>' + valor + '</span>';
+  }).join('');
   return '<div class="cab"><span class="nome">' + esc(f.empresa) + '</span>' + tags + '</div><div class="dados">' + dados + '</div>';
+}
+
+// Copia só os números (CNPJ/IE/IM). A janela do Google às vezes bloqueia a
+// área de transferência: tenta o jeito clássico (execCommand) e, se falhar,
+// o navigator.clipboard; se os dois falharem, deixa o número selecionado
+// para um Ctrl+C.
+function copiar(el){
+  var txt = el.getAttribute('data-c'), ico = el.querySelector('.ico'), deu = false;
+  try {
+    var t = document.createElement('textarea');
+    t.value = txt; t.setAttribute('readonly', ''); t.style.position = 'fixed'; t.style.top = '0'; t.style.opacity = '0';
+    document.body.appendChild(t); t.select();
+    deu = document.execCommand('copy');
+    document.body.removeChild(t);
+  } catch (e) { deu = false; }
+  function avisa(ok){
+    ico.textContent = ok ? 'Copiado ✓' : 'Ctrl+C para copiar';
+    ico.className = 'ico ' + (ok ? 'ok' : 'erro');
+    if (!ok) { var r = document.createRange(); r.selectNodeContents(el.firstChild); var s = window.getSelection(); s.removeAllRanges(); s.addRange(r); }
+    clearTimeout(el._volta);
+    el._volta = setTimeout(function(){ ico.textContent = '⧉'; ico.className = 'ico'; }, ok ? 1300 : 3000);
+  }
+  if (deu) avisa(true);
+  else if (navigator.clipboard && navigator.clipboard.writeText)
+    navigator.clipboard.writeText(txt).then(function(){ avisa(true); }, function(){ avisa(false); });
+  else avisa(false);
 }
 
 function kpi(rot, val, cls, sub){
@@ -2640,7 +2813,7 @@ function carregar(nome){
   var meu = ++pedido;
   var alvo = document.getElementById('conteudo');
   atualizaNav();
-  if (!nome) { alvo.innerHTML = '<div class="inicio">Escolha uma empresa na lista acima.</div>'; return; }
+  if (!nome) { alvo.innerHTML = '<div class="inicio">Digite parte do nome ou o CNPJ no campo acima.</div>'; return; }
   alvo.innerHTML = '<div id="status" class="load">Montando a ficha de ' + esc(nome) + '...</div>';
   google.script.run.withSuccessHandler(function(f){
     if (meu !== pedido) return;
@@ -2660,11 +2833,13 @@ EMPRESAS.forEach(function(e){
 });
 sel.addEventListener('change', function(){ carregar(sel.value); });
 document.addEventListener('keydown', function(e){
-  if (e.target === sel || e.altKey || e.ctrlKey || e.metaKey) return;   // na lista, as setas já trocam
+  var t = e.target.tagName;                                             // digitando na busca: as setas são do texto
+  if (e.target === sel || t === 'INPUT' || t === 'TEXTAREA' || e.altKey || e.ctrlKey || e.metaKey) return;
   if (e.key === 'ArrowLeft')  { e.preventDefault(); passo(-1); }
   if (e.key === 'ArrowRight') { e.preventDefault(); passo(1); }
 });
 sel.value = INICIAL;
+ativarBusca('emp');
 carregar(INICIAL);
 </script>
 </body></html>`;
@@ -2867,9 +3042,11 @@ function adicionarObservacaoConsultas() {
 
 // Fórmulas de contagem por etapa (com ";", como o resto do script).
 // mes = '$D$4' (o seletor do PAINEL) ou '"JANEIRO"' etc.
+// A faixa vai da linha 3 ATÉ O FIM da coluna ($A$3:$A): faixa aberta não
+// encolhe quando se apaga linha (uma fixa, tipo $A$3:$A$1500, encolhe).
 function faixaEtapa(nomeAba, col) {
   const L = letraColuna(col);
-  return "'" + nomeAba + "'!$" + L + '$' + LINHA_INICIAL + ':$' + L + '$' + LIMITE_LINHAS;
+  return "'" + nomeAba + "'!$" + L + '$' + LINHA_INICIAL + ':$' + L;
 }
 function fNoMes(nomeAba, mes) { return 'COUNTIF(' + faixaEtapa(nomeAba, 1) + ';' + mes + ')'; }
 function fResolvidas(nomeAba, mes) {

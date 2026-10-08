@@ -159,6 +159,8 @@ Da coluna D em diante, o CADASTRO é lido pelo **cabeçalho** (linha 2) — EMPR
 | **Anotar lembretes e avisos** | 🧮 Modo Contador → **Bloco de notas** (ou clique no ícone 📝 no painel). Veja a seção 8. |
 | **Cadastrar empresa** | 🧮 Modo Contador → **Cadastrar empresa nova**. |
 
+> **Achar a empresa nas janelas:** em todas as janelas que pedem uma empresa (Ficha, Incluir num mês aberto, Renomear, Ativar/desativar, Excluir e o Bloco de notas), o campo de empresa é uma **busca**: digite qualquer parte do nome ("padaria", "silva", "engenharia") ou o CNPJ, com ou sem pontuação. Não precisa de acento nem de maiúscula. Use ↑ ↓ para escolher, **Enter** para confirmar e **Esc** para desistir.
+
 ### Por que o nome não pode ser editado na mão
 
 As abas de etapa buscam o CNPJ e o regime **pelo nome**, e a Ficha da empresa junta o histórico **pelo nome**. Se você trocar só no CADASTRO, as linhas antigas ficam órfãs: o CNPJ some e o histórico daquela empresa some da ficha.
@@ -179,7 +181,7 @@ As abas de etapa buscam o CNPJ e o regime **pelo nome**, e a Ficha da empresa ju
 
 **FICHA DA EMPRESA** — 🧮 Modo Contador → **Ficha da empresa**. Mostra o ano inteiro de **uma** empresa numa janela só, sem precisar filtrar as 4 abas:
 
-- **Cadastro**: CNPJ, regime, perfil, IE, IM, se faz Folha/SPED/EFD Contribuições e se está ativa. A **senha não aparece** na ficha, de propósito.
+- **Cadastro**: CNPJ, regime, perfil, IE, IM, se faz Folha/SPED/EFD Contribuições e se está ativa. A **senha não aparece** na ficha, de propósito. **Clique no CNPJ, na IE ou na IM para copiar** — vai só os números, do jeito que os portais aceitam; aparece "Copiado ✓" ao lado.
 - **Quatro números**: quantas etapas estão em aberto no ano — separado em pendentes, erros e em branco —, faturamento do ano, média por mês e notas pendentes.
 - **Status por mês**: uma linha por etapa e uma coluna por mês, com as mesmas cores da planilha. Cada linha mostra a **coluna final** da etapa (a mesma que o PAINEL usa). **Clique no nome da etapa** para ver as outras colunas dela. Status **em branco** num mês aberto aparece como uma caixinha tracejada amarela: é o que falta preencher. Na última linha fica o faturamento total de cada mês (passe o mouse para ver o valor exato). Meses ainda não abertos aparecem com o cabeçalho cinza.
 - **Observações**: o que foi anotado na coluna OBSERVAÇÃO da aba 4. CONSULTAS, mês a mês. Na grade, a linha OBSERVAÇÃO (dentro de Consultas) mostra 💬 nos meses com texto — passe o mouse para ler.
@@ -328,7 +330,10 @@ E `ANOMALIA_MIN_MESES`: use `2` para começar a analisar mais cedo no ano, ou de
 
   O limite não avisa aos poucos: ele estoura ao **abrir dezembro**, com o ano inteiro já lançado. Se estiver perto de 124, aumente o número antes de virar o ano.
 
-  Para ir além, aumente `LIMITE_LINHAS` **e** estenda as listas suspensas e as cores condicionais até a nova linha. **Atenção:** as fórmulas do PAINEL e do COMPARATIVO (PENDÊNCIAS) têm a faixa escrita no próprio texto (ex.: `$H$3:$H$1376`). Estenda essas faixas também — senão elas param de somar as linhas de baixo **sem dar erro**.
+  Para ir além, basta aumentar `LIMITE_LINHAS`. O resto acompanha sozinho:
+  - **Listas suspensas e cores:** a cada "Abrir novo mês", "Cadastrar" ou "Incluir empresa num mês aberto", as linhas novas recebem a lista e a cor da primeira linha da aba. Isso também conserta o efeito de **apagar linhas** (excluir mês ou empresa), que faz o Google encolher as faixas de lista e cor.
+  - **Linhas da aba:** se a aba tiver menos linhas do que o necessário, o script cria as que faltam.
+  - **Fórmulas do PAINEL e do COMPARATIVO:** depois de rodar `atualizarFormulasPainel`, elas contam até o fim da coluna (`$A$3:$A`), que não encolhe quando se apaga linha. Se a planilha for antiga (faixa fixa, tipo `$A$3:$A$1376`), rode essa função uma vez pelo editor.
 - **Histórico de versões**: Arquivo → Histórico de versões. Dá para ver quem mudou o quê e voltar atrás. É a sua rede de segurança.
 - **Proteja as fórmulas**: botão direito na aba → Proteger intervalo. Sugestão: colunas CNPJ, REGIME e TOTAL, e as abas PAINEL, COMPARATIVO e LISTAS.
 
